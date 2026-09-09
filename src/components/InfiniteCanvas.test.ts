@@ -19,6 +19,7 @@ function dispatchPointer(
   Object.defineProperties(event, {
     pointerId: { value: pointerId },
     pointerType: { value: pointerType },
+    timeStamp: { value: performance.now() },
   })
   element.dispatchEvent(event)
 }
@@ -29,6 +30,40 @@ function flushAnimationFrame() {
 }
 
 describe('InfiniteCanvas', () => {
+  it('fades laser strokes without creating shapes and clears them when switching tools', async () => {
+    const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'laser' } })
+    const canvas = wrapper.get('section').element
+    await nextTick()
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100 })
+    dispatchPointer(canvas, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 200, clientY: 150 })
+    dispatchPointer(canvas, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 200, clientY: 150 })
+    flushAnimationFrame()
+    await nextTick()
+    expect(wrapper.findAll('.laser-trail path')).toHaveLength(1)
+    expect(wrapper.findAll('.drawn-line, .drawn-rectangle, .drawn-ellipse, .drawn-text')).toHaveLength(0)
+    expect(wrapper.get('.laser-trail path').attributes('d')).toMatch(/Z$/)
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, pointerType: 'mouse', clientX: 400, clientY: 300 })
+    dispatchPointer(canvas, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 350 })
+    dispatchPointer(canvas, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 350 })
+    flushAnimationFrame()
+    await nextTick()
+    expect(wrapper.findAll('.laser-trail path')).toHaveLength(2)
+
+    animationFrames.splice(0).forEach((callback) => callback(performance.now() + 1100))
+    await nextTick()
+    expect(wrapper.findAll('.laser-trail path')).toHaveLength(0)
+    expect(animationFrames).toHaveLength(0)
+
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 200 })
+    dispatchPointer(canvas, 'pointermove', { pointerId: 2, pointerType: 'touch', clientX: 400, clientY: 250 })
+    flushAnimationFrame()
+    await nextTick()
+    expect(wrapper.findAll('.laser-trail path')).toHaveLength(1)
+    await wrapper.setProps({ activeTool: 'select' })
+    expect(wrapper.findAll('.laser-trail path')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
   it('keeps the plain text editor open when placing the caret', async () => {
     const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'select' } })
     await wrapper.get('section').trigger('dblclick', { clientX: 200, clientY: 200 })

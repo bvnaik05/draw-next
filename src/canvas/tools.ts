@@ -1,1 +1,1 @@
-export type DrawingTool = 'select' | 'rectangle' | 'ellipse' | 'line' | 'text'
+export type DrawingTool = 'select' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'laser'

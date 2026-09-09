@@ -3,7 +3,7 @@ import { Button } from 'frappe-ui'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
 import { RotateCw, ZoomIn, ZoomOut } from 'lucide-vue-next'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   MAX_SCALE,
   MIN_SCALE,
@@ -48,6 +48,7 @@ import {
 import type { DrawingTool } from '../canvas/tools'
 import { layoutText, TEXT_FONT_FAMILY, TEXT_LINE_HEIGHT } from '../canvas/text-layout'
 import SnapGuides from './SnapGuides.vue'
+import LaserTrail from './LaserTrail.vue'
 
 type PointerSample = Point & { pointerType: string }
 
@@ -64,6 +65,8 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement>()
+const laserTrail = ref<InstanceType<typeof LaserTrail>>()
+let laserPointerId: number | undefined
 const size = reactive<Point>({ x: 0, y: 0 })
 const viewport = reactive<Viewport>({ translationX: 0, translationY: 0, scale: 1 })
 const pointers = new Map<number, PointerSample>()
@@ -164,6 +167,7 @@ const cursorClass = computed(() => ({
   'is-panning': isPanning.value,
   'is-drawing-shape': ['rectangle', 'ellipse', 'line'].includes(props.activeTool ?? ''),
   'is-text-ready': props.activeTool === 'text',
+  'is-laser-ready': props.activeTool === 'laser' && !isSpacePressed.value && !isPanning.value,
   'is-rotation-ready': hoveredSelectionHandle.value === 'rotate' && !isRotating.value,
   'is-rotating': isRotating.value,
   'is-curve-ready': Boolean(hoveredSelectionHandle.value && isCurveHandle(hoveredSelectionHandle.value)),
@@ -520,6 +524,8 @@ function beginPinch() {
   if (!a || !b) return
   const nextDistance = distance(a, b)
   if (nextDistance <= 0) return
+  laserPointerId = undefined
+  laserTrail.value?.clear()
   singlePointerStart = undefined
   isPanning.value = true
   pinchStart = {
@@ -1280,6 +1286,14 @@ function onPointerDown(event: PointerEvent) {
   }
 
   const point = localPoint(event)
+  if (props.activeTool === 'laser' && event.button === 0 && !isSpacePressed.value && !isPanning.value && pointers.size === 0) {
+    laserPointerId = event.pointerId
+    pointers.set(event.pointerId, { ...point, pointerType: event.pointerType })
+    root.value?.setPointerCapture(event.pointerId)
+    laserTrail.value?.add(screenToWorld(point, latestViewport()), true, event.timeStamp)
+    event.preventDefault()
+    return
+  }
   if ((props.activeTool === 'rectangle' || props.activeTool === 'ellipse') && event.button === 0 && !isSpacePressed.value) {
     beginRectangle(event, point)
     return
@@ -1322,6 +1336,16 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  if (laserPointerId === event.pointerId) {
+    const point = localPoint(event)
+    pointers.set(event.pointerId, { ...point, pointerType: event.pointerType })
+    const samples = event.getCoalescedEvents?.()
+    for (const sample of samples?.length ? samples : [event]) {
+      laserTrail.value?.add(screenToWorld(localPoint(sample), latestViewport()), false, sample.timeStamp)
+    }
+    event.preventDefault()
+    return
+  }
   if (textGesture?.pointerId === event.pointerId) {
     autoPan(localPoint(event))
     updateText(event)
@@ -1396,6 +1420,10 @@ function onPointerMove(event: PointerEvent) {
 }
 
 function finishPointer(event: PointerEvent) {
+  if (laserPointerId === event.pointerId) {
+    laserPointerId = undefined
+    if (event.type === 'pointerup') laserTrail.value?.add(screenToWorld(localPoint(event), latestViewport()), false, event.timeStamp)
+  }
   if (finishText(event)) return
   if (finishRectangle(event)) return
   if (finishLine(event)) return
@@ -1441,6 +1469,8 @@ function cancelPointer(event: PointerEvent) {
 }
 
 function cancelGesture() {
+  laserPointerId = undefined
+  laserTrail.value?.clear()
   for (const id of pointers.keys()) {
     releasePointer(id)
   }
@@ -1622,6 +1652,18 @@ function onResize(width: number, height: number) {
   applyViewport(resizeAroundCenter(viewport, size, nextSize))
   Object.assign(size, nextSize)
 }
+
+watch(() => props.activeTool, (tool, previous) => {
+  if (tool !== 'laser' && previous !== 'laser') return
+  cancelGesture()
+  if (tool === 'laser') {
+    finishTextEditor()
+    clearSelection()
+    hoveredSelectionHandle.value = undefined
+    isMoveReady.value = false
+    isHoveringSelectedShape.value = false
+  }
+})
 
 onMounted(async () => {
   await nextTick()
@@ -1868,6 +1910,7 @@ onBeforeUnmount(() => {
             class="curve-handle"
           />
         </g>
+        <LaserTrail ref="laserTrail" :scale="viewport.scale" />
       </g>
     </svg>
 
@@ -2010,6 +2053,10 @@ onBeforeUnmount(() => {
 
 .infinite-canvas.is-resize-nesw {
   cursor: nesw-resize;
+}
+
+.infinite-canvas.is-laser-ready {
+  cursor: url('../assets/laser-pointer.svg') 2 2, crosshair;
 }
 
 .canvas-surface {

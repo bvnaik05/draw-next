@@ -38,6 +38,9 @@ function onToolShortcut(event: KeyboardEvent) {
   if (event.key.toLowerCase() === 't') {
     event.preventDefault()
     selectTool('text')
+  } else if (event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    selectTool('laser')
   } else if (event.key === 'Escape') finishTool()
 }
 

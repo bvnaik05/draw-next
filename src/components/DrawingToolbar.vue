@@ -4,14 +4,16 @@ import Icon from 'frappe-ui/src/components/Icon/Icon.vue'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
 import { Circle, Minus, MousePointer2, Square, Type } from 'lucide-vue-next'
+import laserPointerIcon from '../assets/laser-pointer.svg?no-inline'
 import type { DrawingTool } from '../canvas/tools'
 
-const tools: ReadonlyArray<{ label: string; icon: typeof Square; value: DrawingTool; shortcut?: string }> = [
+const tools: ReadonlyArray<{ label: string; icon?: typeof Square; value: DrawingTool; shortcut?: string }> = [
   { label: 'Select', icon: MousePointer2, value: 'select' },
   { label: 'Rectangle', icon: Square, value: 'rectangle' },
   { label: 'Ellipse', icon: Circle, value: 'ellipse' },
   { label: 'Line', icon: Minus, value: 'line' },
   { label: 'Text', icon: Type, value: 'text', shortcut: 'T' },
+  { label: 'Laser pointer', value: 'laser', shortcut: 'K' },
 ]
 
 defineProps<{ activeTool: DrawingTool | null }>()
@@ -23,19 +25,23 @@ const emit = defineEmits<{ select: [tool: DrawingTool] }>()
   <nav class="drawing-toolbar" aria-label="Drawing tools">
     <TooltipProvider>
       <div class="drawing-toolbar__surface" role="toolbar" aria-label="Drawing tools">
-        <Tooltip v-for="tool in tools" :key="tool.label" :text="tool.label" placement="top">
+        <Tooltip v-for="tool in tools" :key="tool.label" :text="tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label" placement="top">
           <Button
             class="drawing-tool"
             size="xs"
             variant="ghost"
             theme="gray"
             :label="tool.label"
+            :aria-label="tool.label"
             :class="{ 'is-active': activeTool === tool.value }"
             :aria-pressed="activeTool === tool.value"
             :aria-keyshortcuts="tool.shortcut"
             @click="emit('select', tool.value)"
           >
-            <Icon :name="tool.icon" class="size-3.5" :stroke-width="1.5" />
+            <Icon v-if="tool.icon" :name="tool.icon" class="size-3.5" :stroke-width="1.5" />
+            <svg v-else class="size-3.5" viewBox="0 0 20 20" aria-hidden="true">
+              <use :href="`${laserPointerIcon}#laser-pointer`" />
+            </svg>
           </Button>
         </Tooltip>
       </div>
