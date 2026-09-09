@@ -8,10 +8,10 @@ import laserPointerIcon from '../assets/laser-pointer.svg?no-inline'
 import type { DrawingTool } from '../canvas/tools'
 
 const tools: ReadonlyArray<{ label: string; icon?: typeof Square; value: DrawingTool; shortcut?: string }> = [
-  { label: 'Select', icon: MousePointer2, value: 'select' },
-  { label: 'Rectangle', icon: Square, value: 'rectangle' },
-  { label: 'Ellipse', icon: Circle, value: 'ellipse' },
-  { label: 'Line', icon: Minus, value: 'line' },
+  { label: 'Select', icon: MousePointer2, value: 'select', shortcut: 'Escape' },
+  { label: 'Rectangle', icon: Square, value: 'rectangle', shortcut: 'R' },
+  { label: 'Ellipse', icon: Circle, value: 'ellipse', shortcut: 'O' },
+  { label: 'Line', icon: Minus, value: 'line', shortcut: 'L' },
   { label: 'Text', icon: Type, value: 'text', shortcut: 'T' },
   { label: 'Laser pointer', value: 'laser', shortcut: 'K' },
 ]

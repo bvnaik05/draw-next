@@ -34,6 +34,9 @@ export default defineConfig(({ mode }) => ({
       usePolling: true,
     },
     proxy: {
+      '/desk': 'http://draw.local:8001',
+      '/app': 'http://draw.local:8001',
+      '/login': 'http://draw.local:8001',
       '/api': 'http://draw.local:8001',
       '/assets': 'http://draw.local:8001',
       '/files': 'http://draw.local:8001',

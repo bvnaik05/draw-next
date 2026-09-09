@@ -1,0 +1,17 @@
+{
+  "doctype": "DocType",
+  "name": "Draw Next Drawing",
+  "module": "Custom",
+  "custom": 1,
+  "autoname": "prompt",
+  "title_field": "title",
+  "track_changes": 1,
+  "fields": [
+    { "fieldname": "title", "label": "Title", "fieldtype": "Data", "reqd": 1 },
+    { "fieldname": "scene", "label": "Scene", "fieldtype": "JSON", "reqd": 1 }
+  ],
+  "permissions": [
+    { "role": "All", "read": 1, "write": 1, "create": 1, "delete": 1, "if_owner": 1 },
+    { "role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1 }
+  ]
+}

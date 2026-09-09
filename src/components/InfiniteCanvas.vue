@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { loadDrawing, queueSave, drawingTitle, warnUnsaved, saveDrawing, drawingLoading } from '../canvas/persistence'
+import { bounds, transformShape, isLine, parseScene, type Shape } from '../canvas/selection'
 import { Button } from 'frappe-ui'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
-import { RotateCw, ZoomIn, ZoomOut } from 'lucide-vue-next'
+import { Redo2, RotateCw, Undo2, ZoomIn, ZoomOut } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   MAX_SCALE,
@@ -18,6 +20,7 @@ import {
   type Viewport,
 } from '../canvas/geometry'
 import {
+  createId,
   ellipseFromPoints,
   lineFromPoints,
   rectangleFromPoints,
@@ -67,6 +70,11 @@ const emit = defineEmits<{
 const root = ref<HTMLElement>()
 const laserTrail = ref<InstanceType<typeof LaserTrail>>()
 let laserPointerId: number | undefined
+let cancellingGesture = false
+let shiftClickShape: Shape | undefined
+let duplicateOnDrag = false
+let cycleClickPoint: Point | undefined
+let cycleClickShape: Shape | undefined
 const size = reactive<Point>({ x: 0, y: 0 })
 const viewport = reactive<Viewport>({ translationX: 0, translationY: 0, scale: 1 })
 const pointers = new Map<number, PointerSample>()
@@ -78,6 +86,7 @@ const liveMessage = ref('Zoom 100%')
 const rectangles = ref<(RectangleShape | TextShape)[]>([])
 const lines = ref<LineShape[]>([])
 const history: SceneSnapshot[] = [{ rectangles: [], lines: [] }]
+const historySelections: string[][] = [[]]
 const pendingRectangle = ref<RectangleShape>()
 const pendingLine = ref<LineShape>()
 const pendingText = ref<RectangleShape>()
@@ -103,11 +112,20 @@ let announceTimer: number | undefined
 let viewportFrame: number | undefined
 let pendingViewport: Viewport | undefined
 let pendingZoomAnnouncement = false
-let clipboard: RectangleShape | TextShape | LineShape | undefined
+let clipboard: SceneSnapshot | undefined
+const modifiers = reactive({ alt: false, bypass: false })
+const marquee = ref<RectangleShape>()
+let marqueeGesture: { pointerId: number; start: Point; previous: string[] } | undefined
+const enteredGroup = ref<string>()
+const allShapes = computed(() => [...lines.value, ...rectangles.value].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)))
+const selectedShapes = computed(() => allShapes.value.filter(s => selectedShapeIds.value.includes(s.id)))
+const combinedBounds = computed(() => bounds(selectedShapes.value))
+let creationLast: Point | undefined
 let rectangleGesture: { pointerId: number; start: Point } | undefined
 let lineGesture: { pointerId: number; start: Point } | undefined
 let textGesture: { pointerId: number; start: Point; end?: Point } | undefined
 let historyIndex = 0
+const historyVersion = ref(0)
 type SceneSnapshot = { rectangles: (RectangleShape | TextShape)[]; lines: LineShape[] }
 type TextEditor = {
   kind: 'text' | 'label'
@@ -141,6 +159,7 @@ let selectionGesture:
       original: RectangleShape
       initial: RectangleShape
       originalScene: SceneSnapshot
+      rollbackScene?: SceneSnapshot
       handle?: ResizeHandle | Corner
       handleStart?: Point
       dragStarted?: boolean
@@ -154,6 +173,7 @@ let lineSelectionGesture:
       start: Point
       original: LineShape
       originalScene: SceneSnapshot
+      rollbackScene?: SceneSnapshot
     }
   | undefined
 
@@ -182,9 +202,17 @@ const selectedRectangle = computed(() =>
 )
 const selectedLine = computed(() => lines.value.find((line) => line.id === selectedLineId.value))
 const hasMultipleSelection = computed(() => selectedShapeIds.value.length > 1)
+const canUndo = computed(() => {
+  historyVersion.value
+  return historyIndex > 0
+})
+const canRedo = computed(() => {
+  historyVersion.value
+  return historyIndex < history.length - 1
+})
 const selectionFrame = computed<RectangleShape | undefined>(() => {
-  const rectangle = selectedRectangle.value
-  if (!rectangle || hasMultipleSelection.value) return undefined
+  const rectangle = hasMultipleSelection.value ? combinedBounds.value : selectedRectangle.value
+  if (!rectangle) return undefined
   // Keep handles clear of the shape stroke at every zoom level.
   const inset = 3 / viewport.scale
   return {
@@ -245,7 +273,7 @@ const visibleCurveHandles = computed((): Record<string, Point> | undefined => {
       }
 })
 const showCurveControls = computed(() =>
-  Boolean(selectedRectangle.value && !isEllipse(selectedRectangle.value) && !isText(selectedRectangle.value) && isHoveringSelectedShape.value),
+  Boolean(!hasMultipleSelection.value && selectedRectangle.value && !isEllipse(selectedRectangle.value) && !isText(selectedRectangle.value) && isHoveringSelectedShape.value),
 )
 const rotationHandle = computed(() => {
   const rectangle = selectionFrame.value
@@ -260,9 +288,11 @@ const rotationStemStart = computed(() => {
   return rotatePoint({ x: center.x, y: rectangle.y }, center, rectangle.rotation)
 })
 const rotationHandleScreen = computed(() =>
-  rotationHandle.value ? worldToScreen(rotationHandle.value, viewport) : undefined,
+  !isRotating.value || !hasMultipleSelection.value
+    ? rotationHandle.value ? worldToScreen(rotationHandle.value, viewport) : undefined
+    : undefined,
 )
-const isTextSelected = computed(() => Boolean(selectedRectangle.value && isText(selectedRectangle.value)))
+const isTextSelected = computed(() => Boolean(!hasMultipleSelection.value && selectedRectangle.value && isText(selectedRectangle.value)))
 const textLayouts = computed(() => new Map(rectangles.value.filter(isText).map((shape) => [
   shape.id, layoutText(shape.text, shape.width, shape.fontSize, shape.wrap),
 ])))
@@ -353,31 +383,42 @@ function scenesMatch(left: SceneSnapshot, right: SceneSnapshot): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function commitScene() {
+function commitScene(previousSelection = selectedShapeIds.value) {
+  let order = Math.max(0, ...allShapes.value.map(s => s.order ?? 0))
+  for (const shape of allShapes.value) if (shape.order === undefined) shape.order = ++order
   const next = copyScene()
   if (scenesMatch(history[historyIndex], next)) return
+  const previousIds = new Set([...history[historyIndex]!.rectangles, ...history[historyIndex]!.lines].map(s => s.id))
+  const surviving = previousSelection.filter(id => previousIds.has(id))
+  if (surviving.length) historySelections[historyIndex] = surviving
+  historySelections.splice(historyIndex + 1)
+  historySelections.push([...selectedShapeIds.value])
   history.splice(historyIndex + 1)
   history.push(next)
   historyIndex = history.length - 1
+  historyVersion.value += 1
+  queueSave(next)
 }
 
 function restoreScene(index: number) {
   const scene = copyScene(history[index])
   rectangles.value = scene.rectangles
   lines.value = scene.lines
-  selectedRectangleId.value = undefined
-  selectedLineId.value = undefined
-  selectedShapeIds.value = []
+  const available = new Set([...scene.rectangles, ...scene.lines].map(s => s.id))
+  const surviving = selectedShapeIds.value.filter(id => available.has(id))
+  setSelection(surviving.length ? surviving : (historySelections[index] ?? []).filter(id => available.has(id)))
   hoveredSelectionHandle.value = undefined
   isHoveringSelectedShape.value = false
   isMoveReady.value = false
   clearSnapFeedback()
+  queueSave(scene)
 }
 
 function undoScene() {
   cancelGesture()
   if (historyIndex === 0) return
   historyIndex -= 1
+  historyVersion.value += 1
   restoreScene(historyIndex)
 }
 
@@ -385,50 +426,37 @@ function redoScene() {
   cancelGesture()
   if (historyIndex === history.length - 1) return
   historyIndex += 1
+  historyVersion.value += 1
   restoreScene(historyIndex)
 }
 
 function deleteSelectedShape(): boolean {
-  if (!selectedShapeIds.value.length) return false
-  rectangles.value = rectangles.value.filter((rectangle) => !selectedShapeIds.value.includes(rectangle.id))
-  lines.value = lines.value.filter((line) => !selectedShapeIds.value.includes(line.id))
-  clearSelection()
-  commitScene()
+  return deleteShapes([...selectedShapeIds.value])
+}
+
+function deleteShapes(ids: string[]): boolean {
+  if (!ids.length) return false
+  const previousSelection = [...selectedShapeIds.value]
+  rectangles.value = rectangles.value.filter(shape => !ids.includes(shape.id))
+  lines.value = lines.value.filter(shape => !ids.includes(shape.id))
+  setSelection(selectedShapeIds.value.filter(id => !ids.includes(id)))
+  commitScene(previousSelection.length ? previousSelection : ids)
   return true
 }
 
 function clearSelection() {
-  selectedRectangleId.value = undefined
-  selectedLineId.value = undefined
-  selectedShapeIds.value = []
+  setSelection([])
 }
 
 function selectShape(shape: RectangleShape | LineShape, append = false): boolean {
-  const ids = shape.groupId
-    ? [...rectangles.value, ...lines.value].filter((candidate) => candidate.groupId === shape.groupId).map((candidate) => candidate.id)
+  const ids = shape.groupId && shape.groupId !== enteredGroup.value
+    ? allShapes.value.filter(candidate => candidate.groupId === shape.groupId).map(candidate => candidate.id)
     : [shape.id]
-  const wasSelected = ids.every((id) => selectedShapeIds.value.includes(id))
-  selectedShapeIds.value = append
-    ? wasSelected
-      ? selectedShapeIds.value.filter((id) => !ids.includes(id))
-      : [...new Set([...selectedShapeIds.value, ...ids])]
-    : ids
-  if (append && wasSelected) {
-    const next = selectedShapeIds.value.at(-1)
-    const rectangle = rectangles.value.find((candidate) => candidate.id === next)
-    const line = lines.value.find((candidate) => candidate.id === next)
-    selectedRectangleId.value = rectangle?.id
-    selectedLineId.value = line?.id
-    return false
-  }
-  if ('kind' in shape && shape.kind === 'line') {
-    selectedRectangleId.value = undefined
-    selectedLineId.value = shape.id
-  } else {
-    selectedRectangleId.value = shape.id
-    selectedLineId.value = undefined
-  }
-  return true
+  const wasSelected = ids.every(id => selectedShapeIds.value.includes(id))
+  setSelection(append
+    ? wasSelected ? selectedShapeIds.value.filter(id => !ids.includes(id)) : [...new Set([...selectedShapeIds.value, ...ids])]
+    : ids)
+  return !(append && wasSelected)
 }
 
 function groupSelectedShapes(): boolean {
@@ -444,34 +472,67 @@ function groupSelectedShapes(): boolean {
   return true
 }
 
-function copySelectedShape(): boolean {
-  clipboard = selectedRectangle.value ? { ...selectedRectangle.value } : selectedLine.value && copyLine(selectedLine.value)
-  return Boolean(clipboard)
+function setSelection(ids: string[]) {
+  selectedShapeIds.value = ids
+  selectedRectangleId.value = rectangles.value.find(s => s.id === ids.at(-1))?.id
+  selectedLineId.value = lines.value.find(s => s.id === ids.at(-1))?.id
+  liveMessage.value = `${ids.length} objects selected`
 }
 
-function pasteShape(): boolean {
-  if (!clipboard) return false
-  if ('kind' in clipboard && clipboard.kind === 'line') {
-    const line = {
-      ...copyLine(clipboard),
-      id: nextId('line'),
-      start: { x: clipboard.start.x + 10, y: clipboard.start.y + 10 },
-      end: { x: clipboard.end.x + 10, y: clipboard.end.y + 10 },
-    }
-    lines.value.push(line)
-    selectShape(line)
-  } else {
-    const rectangle = {
-      ...clipboard,
-      id: nextId(isText(clipboard) ? 'text' : isEllipse(clipboard) ? 'ellipse' : 'rectangle'),
-      x: clipboard.x + 10,
-      y: clipboard.y + 10,
-    }
-    rectangles.value.push(rectangle)
-    selectShape(rectangle)
-  }
-  commitScene()
+function selectionScene(): SceneSnapshot {
+  return copyScene({ rectangles: rectangles.value.filter(s => selectedShapeIds.value.includes(s.id)), lines: lines.value.filter(s => selectedShapeIds.value.includes(s.id)) })
+}
+function copySelectedShape(): boolean {
+  if (!selectedShapeIds.value.length) return false
+  clipboard = selectionScene()
   return true
+}
+function insertScene(scene: SceneSnapshot, offset = 10, commit = true) {
+  const groups = new Map<string, string>()
+  let order = Math.max(0, ...allShapes.value.map(shape => shape.order ?? 0))
+  const clone = (shape: Shape): Shape => {
+    const groupId = shape.groupId ? groups.get(shape.groupId) ?? nextGroupId() : undefined
+    if (shape.groupId && groupId) groups.set(shape.groupId, groupId)
+    return isLine(shape)
+      ? { ...shape, id: nextId('line'), order: ++order, groupId, start: { x: shape.start.x + offset, y: shape.start.y + offset }, end: { x: shape.end.x + offset, y: shape.end.y + offset } }
+      : { ...shape, id: nextId('rectangle'), order: ++order, groupId, x: shape.x + offset, y: shape.y + offset }
+  }
+  const shapes = [...scene.lines, ...scene.rectangles].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)).map(clone)
+  lines.value.push(...shapes.filter(isLine))
+  rectangles.value.push(...shapes.filter((s): s is RectangleShape => !isLine(s)))
+  setSelection(shapes.map(s => s.id))
+  if (commit) commitScene()
+}
+function duplicateSelection(offset = 10, commit = true) {
+  if (selectedShapeIds.value.length) insertScene(selectionScene(), offset, commit)
+}
+function onClipboard(event: ClipboardEvent) {
+  if (drawingLoading.value || editableTarget(event.target)) return
+  if (event.type === 'paste') {
+    try {
+      const data = JSON.parse(event.clipboardData?.getData('text/plain') ?? '')
+      if (data.format !== 'draw-next') return
+      insertScene(parseScene(data.scene))
+      event.preventDefault()
+    } catch { liveMessage.value = 'Clipboard does not contain a valid Draw Next drawing.' }
+  } else if (copySelectedShape()) {
+    event.clipboardData?.setData('text/plain', JSON.stringify({ format: 'draw-next', scene: clipboard }))
+    event.preventDefault()
+    if (event.type === 'cut' && event.clipboardData) deleteSelectedShape()
+  }
+}
+function ungroupSelection() {
+  for (const shape of selectedShapes.value) delete shape.groupId
+  enteredGroup.value = undefined
+  commitScene()
+}
+
+function shapeLabel(shape: Shape) {
+  return isLine(shape) ? 'Line' : isText(shape) ? shape.text : shape.label || (isEllipse(shape) ? 'Ellipse' : 'Rectangle')
+}
+
+function constrainDelta(delta: Point): Point {
+  return isShiftPressed.value ? Math.abs(delta.x) >= Math.abs(delta.y) ? { x: delta.x, y: 0 } : { x: 0, y: delta.y } : delta
 }
 
 function moveSelectedShape(x: number, y: number): boolean {
@@ -725,6 +786,8 @@ function updateLabel(id: string, label: string | undefined) {
 function beginRectangle(event: PointerEvent, point: Point) {
   const start = screenToWorld(point, latestViewport())
   rectangleGesture = { pointerId: event.pointerId, start }
+  creationLast = start
+  modifiers.alt = event.altKey
   latestGesturePoint.value = point
   pendingRectangle.value = shapeFromPoints(start, start, 'pending')
   root.value?.setPointerCapture(event.pointerId)
@@ -733,11 +796,21 @@ function beginRectangle(event: PointerEvent, point: Point) {
 
 function updateRectangle(point: Point) {
   if (!rectangleGesture) return
+  const end = screenToWorld(point, latestViewport())
+  if (isSpacePressed.value && creationLast) {
+    rectangleGesture.start.x += end.x - creationLast.x
+    rectangleGesture.start.y += end.y - creationLast.y
+  }
+  creationLast = end
   pendingRectangle.value = shapeFromPoints(
     rectangleGesture.start,
     screenToWorld(point, latestViewport()),
     'pending', isShiftPressed.value,
   )
+  if (modifiers.alt && pendingRectangle.value) {
+    const p = pendingRectangle.value, c = rectangleGesture.start
+    pendingRectangle.value = { ...p, x: c.x - p.width, y: c.y - p.height, width: p.width * 2, height: p.height * 2 }
+  }
 }
 
 function finishRectangle(event: PointerEvent) {
@@ -765,6 +838,8 @@ function finishRectangle(event: PointerEvent) {
 function beginLine(event: PointerEvent, point: Point) {
   const start = screenToWorld(point, latestViewport())
   lineGesture = { pointerId: event.pointerId, start }
+  creationLast = start
+  modifiers.alt = event.altKey
   latestGesturePoint.value = point
   pendingLine.value = lineFromPoints(start, start, 'pending')
   root.value?.setPointerCapture(event.pointerId)
@@ -773,12 +848,19 @@ function beginLine(event: PointerEvent, point: Point) {
 
 function updateLine(point: Point) {
   if (!lineGesture) return
+  const end = screenToWorld(point, latestViewport())
+  if (isSpacePressed.value && creationLast) {
+    lineGesture.start.x += end.x - creationLast.x
+    lineGesture.start.y += end.y - creationLast.y
+  }
+  creationLast = end
   pendingLine.value = lineFromPoints(
     lineGesture.start,
     screenToWorld(point, latestViewport()),
     'pending',
     isShiftPressed.value,
   )
+  if (modifiers.alt && pendingLine.value) pendingLine.value.start = { x: 2 * lineGesture.start.x - pendingLine.value.end.x, y: 2 * lineGesture.start.y - pendingLine.value.end.y }
 }
 
 function finishLine(event: PointerEvent) {
@@ -804,18 +886,21 @@ function startSelection(event: PointerEvent, point: Point) {
   isMoveReady.value = false
   latestGesturePoint.value = point
   const worldPoint = screenToWorld(point, latestViewport())
-  const handle = hasMultipleSelection.value ? undefined : selectionHandleAt(point)
-  const rectangle = selectedRectangle.value
+  const handle = selectionHandleAt(point)
+  const rectangle = hasMultipleSelection.value ? combinedBounds.value : selectedRectangle.value
   const line = selectedLine.value
   const lineHandle = hasMultipleSelection.value ? undefined : lineSelectionHandleAt(point)
+  cycleClickPoint = (event.metaKey || event.ctrlKey) && !handle ? point : undefined
+  cycleClickShape = undefined
+  if (cycleClickPoint) {
+    const hits = [...allShapes.value].reverse().filter(s => isLine(s) ? containsLine(s, point) : containsPoint(s, worldPoint))
+    cycleClickShape = hits[(hits.findIndex(s => selectedShapeIds.value.includes(s.id)) + 1) % hits.length]
+  }
+  shiftClickShape = undefined
   if (event.shiftKey && !handle && !lineHandle) {
-    const hit = [...rectangles.value].reverse().find((candidate) => containsPoint(candidate, worldPoint))
-    if (hit) selectShape(hit, true)
-    else {
-      const lineHit = [...lines.value].reverse().find((candidate) => containsLine(candidate, point))
-      if (lineHit) selectShape(lineHit, true)
-    }
-    return
+    const hit = [...allShapes.value].reverse().find(s => isLine(s) ? containsLine(s, point) : containsPoint(s, worldPoint))
+    if (hit && selectedShapeIds.value.includes(hit.id)) shiftClickShape = hit
+    else if (hit) selectShape(hit, true)
   }
   if (line && lineHandle) {
     lineSelectionGesture = {
@@ -839,22 +924,23 @@ function startSelection(event: PointerEvent, point: Point) {
     }
     isRotating.value = handle === 'rotate'
   } else {
-    const hit = [...rectangles.value].reverse().find((candidate) => containsPoint(candidate, worldPoint))
+    const topHit = [...allShapes.value].reverse().find(s => isLine(s) ? containsLine(s, point) : containsPoint(s, worldPoint))
+    const hit = topHit && !isLine(topHit) ? topHit : undefined
     isHoveringSelectedShape.value = Boolean(hit)
     if (hit) {
-      if (!selectShape(hit, event.shiftKey)) return
+      if (!selectedShapeIds.value.includes(hit.id) && !selectShape(hit, event.shiftKey)) return
       selectionGesture = {
         pointerId: event.pointerId,
         kind: 'move',
         start: worldPoint,
-        original: { ...hit },
+        original: { ...(hasMultipleSelection.value ? combinedBounds.value! : hit) },
         initial: { ...hit },
         originalScene: copyScene(),
       }
     } else {
-      const lineHit = [...lines.value].reverse().find((candidate) => containsLine(candidate, point))
+      const lineHit = topHit && isLine(topHit) ? topHit : undefined
       if (lineHit) {
-        if (!selectShape(lineHit, event.shiftKey)) return
+        if (!selectedShapeIds.value.includes(lineHit.id) && !selectShape(lineHit, event.shiftKey)) return
         lineSelectionGesture = {
           pointerId: event.pointerId,
           kind: 'move',
@@ -862,18 +948,38 @@ function startSelection(event: PointerEvent, point: Point) {
           original: copyLine(lineHit),
           originalScene: copyScene(),
         }
-      } else if (!event.shiftKey) {
-        clearSelection()
+      } else {
+        marqueeGesture = { pointerId: event.pointerId, start: worldPoint, previous: event.shiftKey ? [...selectedShapeIds.value] : [] }
+        root.value?.setPointerCapture(event.pointerId)
+        if (!event.shiftKey) clearSelection()
       }
     }
   }
 
+  if (hasMultipleSelection.value && lineSelectionGesture?.kind === 'move' && combinedBounds.value) {
+    selectionGesture = { pointerId: event.pointerId, kind: 'move', start: worldPoint, original: { ...combinedBounds.value }, initial: { ...combinedBounds.value }, originalScene: copyScene() }
+    lineSelectionGesture = undefined
+  }
+  duplicateOnDrag = event.altKey && (selectionGesture?.kind === 'move' || lineSelectionGesture?.kind === 'move')
   if (!selectionGesture && !lineSelectionGesture) return
   root.value?.setPointerCapture(event.pointerId)
   event.preventDefault()
 }
 
 function updateSelection(point: Point, constrainProportions = isShiftPressed.value) {
+  const gesture = selectionGesture ?? lineSelectionGesture
+  if (gesture?.kind === 'move') {
+    if (distance(screenToWorld(point, latestViewport()), gesture.start) * viewport.scale < 3) return
+    shiftClickShape = undefined
+    cycleClickPoint = undefined
+    if (duplicateOnDrag) {
+      const rollback = copyScene()
+      duplicateSelection(0, false)
+      gesture.rollbackScene = rollback
+      gesture.originalScene = copyScene()
+      duplicateOnDrag = false
+    }
+  }
   if (lineSelectionGesture) {
     updateLineSelection(point)
     return
@@ -887,22 +993,24 @@ function updateSelection(point: Point, constrainProportions = isShiftPressed.val
     selectionGesture.start = pointer
     return
   }
+  // ponytail: rotated/text groups keep proportions; affine geometry is needed for skew.
+  constrainProportions ||= selectionGesture.kind === 'resize' && hasMultipleSelection.value && selectedShapes.value.some(s => !isLine(s) && (s.rotation % 90 !== 0 || isText(s)))
   const textCornerResize = Boolean(
     isText(original) && selectionGesture.kind === 'resize' && selectionGesture.handle && isCorner(selectionGesture.handle),
   )
-  const moved = moveRectangle(original, {
+  const moved = moveRectangle(original, constrainDelta({
     x: pointer.x - selectionGesture.start.x,
     y: pointer.y - selectionGesture.start.y,
-  })
-  const moveSnap = selectionGesture.kind === 'move'
-    ? snapShapeMove(moved, rectangles.value, viewport.scale)
+  }))
+  const moveSnap = selectionGesture.kind === 'move' && !modifiers.bypass && !isShiftPressed.value
+    ? snapShapeMove(moved, rectangles.value.filter(s => !selectedShapeIds.value.includes(s.id)), viewport.scale)
     : undefined
-  const resizeSnap = selectionGesture.kind === 'resize' && selectionGesture.handle && !constrainProportions && !textCornerResize
+  const resizeSnap = selectionGesture.kind === 'resize' && selectionGesture.handle && !constrainProportions && !textCornerResize && !modifiers.bypass && !modifiers.alt
     ? snapResizeHandlePoint(
         resizePointer(pointer),
         original,
         selectionGesture.handle,
-        rectangles.value,
+        rectangles.value.filter(s => !selectedShapeIds.value.includes(s.id)),
         viewport.scale,
       )
     : undefined
@@ -915,21 +1023,21 @@ function updateSelection(point: Point, constrainProportions = isShiftPressed.val
   } else {
     clearShapeSnapFeedback()
   }
-  const next =
+  let next =
     selectionGesture.kind === 'move'
-      ? moveSnap!.shape
+      ? moveSnap?.shape ?? moved
       : selectionGesture.kind === 'resize' && selectionGesture.handle
         ? isCorner(selectionGesture.handle)
           ? resizeFromCorner(
               original,
               selectionGesture.handle,
-              resizeSnap?.point ?? resizePointer(pointer),
+              resizeSnap?.point ?? centeredResizePointer(pointer),
               constrainProportions || textCornerResize,
             )
           : resizeFromEdge(
               original,
               selectionGesture.handle,
-              resizeSnap?.point ?? resizePointer(pointer),
+              resizeSnap?.point ?? centeredResizePointer(pointer),
               constrainProportions,
             )
         : selectionGesture.kind === 'curve' && selectionGesture.handle && isCorner(selectionGesture.handle)
@@ -939,11 +1047,24 @@ function updateSelection(point: Point, constrainProportions = isShiftPressed.val
               curvePointer(original, selectionGesture.handle, pointer, selectionGesture.start),
             )
         : rotateRectangle(original, selectionGesture.start, pointer, constrainProportions)
+  if (selectionGesture.kind === 'resize' && modifiers.alt) {
+    const c = rectangleCenter(original)
+    next = { ...next, x: c.x - next.width / 2, y: c.y - next.height / 2 }
+  }
   if (selectionGesture.kind === 'move') {
     moveSelectedShapes(selectionGesture.originalScene, {
       x: next.x - original.x,
       y: next.y - original.y,
     })
+    return
+  }
+  if (hasMultipleSelection.value) {
+    const source = selectionGesture.originalScene
+    for (const shape of [...source.rectangles, ...source.lines]) {
+      if (!selectedShapeIds.value.includes(shape.id)) continue
+      const transformed = transformShape(shape, original, next)
+      if (isLine(transformed)) replaceLine(transformed); else replaceRectangle(transformed)
+    }
     return
   }
   if (isText(original)) {
@@ -958,10 +1079,10 @@ function updateLineSelection(point: Point) {
   const { kind } = lineSelectionGesture
   if (kind === 'move') {
     clearSnapFeedback()
-    const moved = moveLine(original, {
+    const moved = moveLine(original, constrainDelta({
       x: pointer.x - lineSelectionGesture.start.x,
       y: pointer.y - lineSelectionGesture.start.y,
-    })
+    }))
     moveSelectedShapes(lineSelectionGesture.originalScene, {
       x: moved.start.x - original.start.x,
       y: moved.start.y - original.start.y,
@@ -973,8 +1094,16 @@ function updateLineSelection(point: Point) {
 }
 
 function finishSelection(event: PointerEvent, restore = false): boolean {
+  if (cycleClickPoint && cycleClickShape && !restore) {
+    enteredGroup.value = cycleClickShape.groupId
+    setSelection([cycleClickShape.id])
+  }
+  cycleClickPoint = undefined
+  if (shiftClickShape && !restore) selectShape(shiftClickShape, true)
+  shiftClickShape = undefined
+  duplicateOnDrag = false
   if (lineSelectionGesture?.pointerId === event.pointerId) {
-    if (restore) replaceLine(lineSelectionGesture.original)
+    if (restore) restoreGestureScene(lineSelectionGesture.rollbackScene ?? lineSelectionGesture.originalScene)
     lineSelectionGesture = undefined
     latestGesturePoint.value = undefined
     clearSnapFeedback()
@@ -983,7 +1112,7 @@ function finishSelection(event: PointerEvent, restore = false): boolean {
     return true
   }
   if (!selectionGesture || selectionGesture.pointerId !== event.pointerId) return false
-  if (restore) replaceRectangle(selectionGesture.initial)
+  if (restore) restoreGestureScene(selectionGesture.rollbackScene ?? selectionGesture.originalScene)
   selectionGesture = undefined
   latestGesturePoint.value = undefined
   isRotating.value = false
@@ -1058,6 +1187,11 @@ function lineSelectionHandleAt(point: Point): LineEndpoint | undefined {
   return undefined
 }
 
+function centeredResizePointer(pointer: Point): Point {
+  const point = resizePointer(pointer)
+  const start = selectionGesture?.handleStart
+  return modifiers.alt && start ? { x: start.x + 2 * (point.x - start.x), y: start.y + 2 * (point.y - start.y) } : point
+}
 function resizePointer(pointer: Point): Point {
   if (!selectionGesture?.handleStart) return pointer
   return {
@@ -1084,20 +1218,6 @@ function refreshActiveGesture() {
   if (rectangleGesture) updateRectangle(latestGesturePoint.value)
   else if (lineGesture) updateLine(latestGesturePoint.value)
   else if (selectionGesture || lineSelectionGesture) updateSelection(latestGesturePoint.value)
-}
-
-function rebaseProportionalResize() {
-  const gesture = selectionGesture
-  if (!gesture || gesture.kind !== 'resize' || !gesture.handle || !latestGesturePoint.value) return
-  const current = rectangles.value.find((shape) => shape.id === gesture.original.id)
-  if (!current) return
-  const pointer = screenToWorld(latestGesturePoint.value, latestViewport())
-  selectionGesture = {
-    ...gesture,
-    start: pointer,
-    original: { ...current },
-    handleStart: resizeHandlePoint(current, gesture.handle),
-  }
 }
 
 function resizeHandlePoint(rectangle: RectangleShape, handle: ResizeHandle): Point {
@@ -1155,14 +1275,11 @@ function copyLine(line: LineShape): LineShape {
 }
 
 function nextId(kind: string): string {
-  return `${kind}-${rectangles.value.length + lines.value.length}`
+  return createId(kind)
 }
 
 function nextGroupId(): string {
-  let index = 0
-  const groups = new Set([...rectangles.value, ...lines.value].map((shape) => shape.groupId))
-  while (groups.has(`group-${index}`)) index += 1
-  return `group-${index}`
+  return createId('group')
 }
 
 function releasePointer(pointerId: number) {
@@ -1200,7 +1317,7 @@ function resizeText(original: TextShape, next: RectangleShape, scaleFont: boolea
     x: handle === 'west' || handle === 'northwest' || handle === 'southwest' ? 1 : 0,
     y: handle === 'northwest' || handle === 'northeast' ? 1 : 0,
   }
-  const bounds = fitTextBounds(next, layout.width, layout.height, anchor)
+  const bounds = fitTextBounds(next, layout.width, layout.height, modifiers.alt ? { x: 0.5, y: 0.5 } : anchor)
   return { ...original, ...bounds, fontSize, wrap }
 }
 
@@ -1264,7 +1381,7 @@ function shapeFromPoints(start: Point, end: Point, id: string, constrainProporti
 
 function resizeCursor(handle: SelectionHandle | undefined): 'ns' | 'ew' | 'nwse' | 'nesw' | undefined {
   if (!handle || handle === 'rotate' || isCurveHandle(handle)) return undefined
-  const rotation = selectedRectangle.value?.rotation ?? 0
+  const rotation = selectionFrame.value?.rotation ?? 0
   if (handle === 'north' || handle === 'south') return cursorForAngle(rotation + 90)
   if (handle === 'east' || handle === 'west') return cursorForAngle(rotation)
   return cursorForAngle(rotation + (handle === 'northwest' || handle === 'southeast' ? 45 : 135))
@@ -1277,7 +1394,7 @@ function cursorForAngle(angle: number): 'ns' | 'ew' | 'nwse' | 'nesw' {
 }
 
 function onPointerDown(event: PointerEvent) {
-  if (editableTarget(event.target) || (event.target as Element).closest('button')) return
+  if (drawingLoading.value || editableTarget(event.target) || (event.target as Element).closest('button')) return
   root.value?.focus({ preventScroll: true })
   isShiftPressed.value = event.shiftKey
   if (event.button === 2) return
@@ -1286,13 +1403,24 @@ function onPointerDown(event: PointerEvent) {
   }
 
   const point = localPoint(event)
-  if (props.activeTool === 'laser' && event.button === 0 && !isSpacePressed.value && !isPanning.value && pointers.size === 0) {
+  if (props.activeTool === 'laser' && event.button === 0 && !isSpacePressed.value && !isPanning.value) {
     laserPointerId = event.pointerId
     pointers.set(event.pointerId, { ...point, pointerType: event.pointerType })
     root.value?.setPointerCapture(event.pointerId)
     laserTrail.value?.add(screenToWorld(point, latestViewport()), true, event.timeStamp)
     event.preventDefault()
     return
+  }
+  if (event.pointerType === 'touch') {
+    const contacts = [...pointers.entries()].filter(([, p]) => p.pointerType === 'touch')
+    if (contacts.length) {
+      cancelGesture()
+      for (const [id, sample] of contacts) pointers.set(id, sample)
+      pointers.set(event.pointerId, { ...point, pointerType: 'touch' })
+      for (const id of pointers.keys()) root.value?.setPointerCapture(id)
+      beginPinch(); event.preventDefault(); return
+    }
+    pointers.set(event.pointerId, { ...point, pointerType: 'touch' })
   }
   if ((props.activeTool === 'rectangle' || props.activeTool === 'ellipse') && event.button === 0 && !isSpacePressed.value) {
     beginRectangle(event, point)
@@ -1336,6 +1464,21 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  modifiers.alt = event.altKey
+  modifiers.bypass = event.ctrlKey || event.metaKey
+  if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { ...localPoint(event), pointerType: event.pointerType })
+  if (marqueeGesture?.pointerId === event.pointerId) {
+    const frame = rectangleFromPoints(marqueeGesture.start, screenToWorld(localPoint(event), latestViewport()), 'marquee')
+    marquee.value = frame
+    const hits = allShapes.value.filter(shape => {
+      const b = bounds([shape])!
+      return b.x <= frame.x + frame.width && b.x + b.width >= frame.x && b.y <= frame.y + frame.height && b.y + b.height >= frame.y
+    })
+    const groups = new Set(hits.map(s => s.groupId).filter(Boolean))
+    setSelection([...new Set([...marqueeGesture.previous, ...allShapes.value.filter(s => hits.includes(s) || (s.groupId && groups.has(s.groupId))).map(s => s.id)])])
+    event.preventDefault()
+    return
+  }
   if (laserPointerId === event.pointerId) {
     const point = localPoint(event)
     pointers.set(event.pointerId, { ...point, pointerType: event.pointerType })
@@ -1420,6 +1563,10 @@ function onPointerMove(event: PointerEvent) {
 }
 
 function finishPointer(event: PointerEvent) {
+  if (!pinchStart && (marqueeGesture || rectangleGesture || lineGesture || textGesture || selectionGesture || lineSelectionGesture)) pointers.delete(event.pointerId)
+  if (marqueeGesture?.pointerId === event.pointerId) {
+    marqueeGesture = undefined; marquee.value = undefined; releasePointer(event.pointerId); return
+  }
   if (laserPointerId === event.pointerId) {
     laserPointerId = undefined
     if (event.type === 'pointerup') laserTrail.value?.add(screenToWorld(localPoint(event), latestViewport()), false, event.timeStamp)
@@ -1443,6 +1590,9 @@ function finishPointer(event: PointerEvent) {
 }
 
 function cancelPointer(event: PointerEvent) {
+  if (cancellingGesture) return
+  if (!pinchStart && (marqueeGesture || rectangleGesture || lineGesture || textGesture || selectionGesture || lineSelectionGesture)) pointers.delete(event.pointerId)
+  if (marqueeGesture?.pointerId === event.pointerId) { cancelGesture(); return }
   if (textGesture?.pointerId === event.pointerId) {
     textGesture = undefined
     pendingText.value = undefined
@@ -1468,7 +1618,15 @@ function cancelPointer(event: PointerEvent) {
   finishPointer(event)
 }
 
+function restoreGestureScene(scene: SceneSnapshot) {
+  const restored = copyScene(scene)
+  rectangles.value = restored.rectangles; lines.value = restored.lines
+}
 function cancelGesture() {
+  if (cancellingGesture) return
+  cancellingGesture = true
+  if (marqueeGesture) { setSelection(marqueeGesture.previous); releasePointer(marqueeGesture.pointerId) }
+  marqueeGesture = undefined; marquee.value = undefined
   laserPointerId = undefined
   laserTrail.value?.clear()
   for (const id of pointers.keys()) {
@@ -1486,9 +1644,9 @@ function cancelGesture() {
   lineGesture = undefined
   pendingText.value = undefined
   textGesture = undefined
-  if (selectionGesture) replaceRectangle(selectionGesture.initial)
+  if (selectionGesture) restoreGestureScene(selectionGesture.rollbackScene ?? selectionGesture.originalScene)
   selectionGesture = undefined
-  if (lineSelectionGesture) replaceLine(lineSelectionGesture.original)
+  if (lineSelectionGesture) restoreGestureScene(lineSelectionGesture.rollbackScene ?? lineSelectionGesture.originalScene)
   lineSelectionGesture = undefined
   isRotating.value = false
   clearSnapFeedback()
@@ -1499,6 +1657,7 @@ function cancelGesture() {
   isSpacePressed.value = false
   isShiftPressed.value = false
   latestGesturePoint.value = undefined
+  cancellingGesture = false
 }
 
 function onWheel(event: WheelEvent) {
@@ -1532,10 +1691,13 @@ function editableTarget(target: EventTarget | null): boolean {
 }
 
 function onKeyDown(event: KeyboardEvent) {
-  if (editableTarget(event.target) || event.isComposing || event.defaultPrevented) return
+  if ((event.target as Element)?.closest('button, a') && [' ', 'Enter', 'Tab'].includes(event.key)) return
+  if (drawingLoading.value || editableTarget(event.target) || event.isComposing || event.defaultPrevented) return
+  modifiers.alt = event.altKey
+  modifiers.bypass = event.ctrlKey || event.metaKey
+  if (['Alt', 'Control', 'Meta'].includes(event.key)) refreshActiveGesture()
   if (event.key === 'Shift') {
     if (!isShiftPressed.value) {
-      rebaseProportionalResize()
       isShiftPressed.value = true
       refreshActiveGesture()
     }
@@ -1543,6 +1705,16 @@ function onKeyDown(event: KeyboardEvent) {
   }
   isShiftPressed.value = event.shiftKey
   const key = event.key.toLowerCase()
+  if ((event.ctrlKey || event.metaKey) && ['a', 'd'].includes(key)) {
+    event.preventDefault()
+    if (key === 'a') setSelection(allShapes.value.map(s => s.id)); else duplicateSelection()
+    return
+  }
+  if (event.key === 'Tab' && event.target === root.value && allShapes.value.length) {
+    const index = allShapes.value.findIndex(s => s.id === selectedShapeIds.value.at(-1))
+    selectShape(allShapes.value[(index + (event.shiftKey ? -1 : 1) + allShapes.value.length) % allShapes.value.length]!)
+    event.preventDefault(); return
+  }
   if ((event.ctrlKey || event.metaKey) && key === 'z') {
     event.shiftKey ? redoScene() : undoScene()
     event.preventDefault()
@@ -1553,15 +1725,9 @@ function onKeyDown(event: KeyboardEvent) {
     event.preventDefault()
     return
   }
-  if ((event.ctrlKey || event.metaKey) && key === 'c' && copySelectedShape()) {
-    event.preventDefault()
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && key === 'v' && pasteShape()) {
-    event.preventDefault()
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && key === 'g' && groupSelectedShapes()) {
+  if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'x'].includes(key)) return
+  if ((event.ctrlKey || event.metaKey) && key === 'g') {
+    event.shiftKey ? ungroupSelection() : groupSelectedShapes()
     event.preventDefault()
     return
   }
@@ -1613,6 +1779,8 @@ function onKeyDown(event: KeyboardEvent) {
   } else if (event.key === 'Escape') {
     cancelGesture()
     clearSelection()
+    enteredGroup.value = undefined
+    root.value?.focus()
     emit('cancelTool')
   }
 }
@@ -1621,7 +1789,9 @@ function onDoubleClick(event: MouseEvent) {
   if (props.activeTool !== 'select' || textEditor.value || isSpacePressed.value || editableTarget(event.target)) return
   const point = localPoint(event)
   const worldPoint = screenToWorld(point, latestViewport())
-  const hit = [...rectangles.value].reverse().find((shape) => containsPoint(shape, worldPoint))
+  const hit = [...allShapes.value].reverse().find(shape => isLine(shape) ? containsLine(shape, point) : containsPoint(shape, worldPoint))
+  if (hit?.groupId && enteredGroup.value !== hit.groupId) { enteredGroup.value = hit.groupId; selectShape(hit); return }
+  if (hit && isLine(hit)) { selectShape(hit); event.preventDefault(); return }
   if (hit && isText(hit)) editText(hit)
   else if (hit) editLabel(hit)
   else startTextEditor({ kind: 'text', text: '', x: worldPoint.x, y: worldPoint.y - 10, width: 16, height: 20, fontSize: 16, wrap: false })
@@ -1639,9 +1809,11 @@ function onTextEditorKeyDown(event: KeyboardEvent) {
 }
 
 function onKeyUp(event: KeyboardEvent) {
+  modifiers.alt = event.altKey
+  modifiers.bypass = event.ctrlKey || event.metaKey
+  if (['Alt', 'Control', 'Meta'].includes(event.key)) refreshActiveGesture()
   if (event.code === 'Space') isSpacePressed.value = false
   if (event.key === 'Shift' && isShiftPressed.value) {
-    rebaseProportionalResize()
     isShiftPressed.value = false
     refreshActiveGesture()
   }
@@ -1665,7 +1837,22 @@ watch(() => props.activeTool, (tool, previous) => {
   }
 })
 
+watch(drawingTitle, () => queueSave(copyScene()))
+
 onMounted(async () => {
+  document.addEventListener('keydown', onKeyDown)
+  document.addEventListener('copy', onClipboard)
+  document.addEventListener('cut', onClipboard)
+  document.addEventListener('paste', onClipboard)
+  window.addEventListener('beforeunload', warnUnsaved)
+  window.addEventListener('online', saveDrawing)
+  const scene = await loadDrawing()
+  if (scene) {
+    restoreGestureScene(scene)
+    history.splice(0, history.length, copyScene(scene))
+    historyIndex = 0
+    historyVersion.value += 1
+  }
   await nextTick()
   if (!root.value) return
   const bounds = root.value.getBoundingClientRect()
@@ -1680,6 +1867,12 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('copy', onClipboard)
+  document.removeEventListener('cut', onClipboard)
+  document.removeEventListener('paste', onClipboard)
+  window.removeEventListener('beforeunload', warnUnsaved)
+  window.removeEventListener('online', saveDrawing)
   resizeObserver?.disconnect()
   window.removeEventListener('blur', cancelGesture)
   window.removeEventListener('keyup', onKeyUp)
@@ -1697,17 +1890,17 @@ onBeforeUnmount(() => {
     tabindex="0"
     role="application"
     aria-label="Drawing canvas"
-    @contextmenu.prevent
-    @keydown="onKeyDown"
+
+
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="finishPointer"
     @pointercancel="cancelPointer"
-    @lostpointercapture="finishPointer"
+    @lostpointercapture="cancelPointer"
     @dblclick="onDoubleClick"
     @wheel="onWheel"
   >
-    <svg class="canvas-surface" width="100%" height="100%" aria-hidden="true">
+    <svg class="canvas-surface" width="100%" height="100%" role="listbox" aria-label="Drawing objects" aria-multiselectable="true">
       <defs>
         <pattern
           id="sparse-dot-pattern"
@@ -1722,8 +1915,9 @@ onBeforeUnmount(() => {
       </defs>
       <rect width="100%" height="100%" fill="url(#sparse-dot-pattern)" />
       <g :transform="`translate(${viewport.translationX} ${viewport.translationY}) scale(${viewport.scale})`">
+        <g v-for="object in allShapes" :key="object.id" role="option" :aria-selected="selectedShapeIds.includes(object.id)" :aria-label="shapeLabel(object)">
         <line
-          v-for="line in lines"
+          v-for="line in isLine(object) ? [object] : []"
           :key="line.id"
           :x1="line.start.x"
           :y1="line.start.y"
@@ -1732,7 +1926,7 @@ onBeforeUnmount(() => {
           class="drawn-line"
         />
         <g
-          v-for="rectangle in rectangles.filter((shape) => !isEllipse(shape) && !isText(shape))"
+          v-for="rectangle in !isLine(object) && !isEllipse(object) && !isText(object) ? [object] : []"
           :key="rectangle.id"
           :transform="`rotate(${rectangle.rotation} ${rectangle.x + rectangle.width / 2} ${rectangle.y + rectangle.height / 2})`"
         >
@@ -1761,7 +1955,7 @@ onBeforeUnmount(() => {
           </text>
         </g>
         <g
-          v-for="ellipse in rectangles.filter(isEllipse)"
+          v-for="ellipse in !isLine(object) && isEllipse(object) ? [object] : []"
           :key="ellipse.id"
           :transform="`rotate(${ellipse.rotation} ${ellipse.x + ellipse.width / 2} ${ellipse.y + ellipse.height / 2})`"
         >
@@ -1788,7 +1982,7 @@ onBeforeUnmount(() => {
           </text>
         </g>
         <text
-          v-for="text in rectangles.filter(isText)"
+          v-for="text in !isLine(object) && isText(object) ? [object] : []"
           :key="text.id"
           v-show="textEditor?.shapeId !== text.id"
           :transform="`rotate(${text.rotation} ${text.x + text.width / 2} ${text.y + text.height / 2})`"
@@ -1799,6 +1993,7 @@ onBeforeUnmount(() => {
         >
           <tspan v-for="(line, index) in textLayouts.get(text.id)?.lines" :key="index" :x="text.x" :dy="index ? text.fontSize * 1.25 : 0">{{ line }}</tspan>
         </text>
+        </g>
         <rect
           v-if="pendingRectangle && !isEllipse(pendingRectangle)"
           :x="pendingRectangle.x"
@@ -1848,7 +2043,7 @@ onBeforeUnmount(() => {
           <circle :cx="selectedLine.end.x" :cy="selectedLine.end.y" :r="3 / viewport.scale" class="selection-handle" />
         </g>
         <g
-          v-if="selectionFrame && selectionCorners && selectionEdges && curveHandles && rotationHandle && rotationStemStart"
+          v-if="selectionFrame && selectionCorners && selectionEdges && rotationHandle && rotationStemStart && !(hasMultipleSelection && isRotating)"
           class="selection-overlay"
           :class="{ 'is-text-selection': isTextSelected }"
         >
@@ -1910,6 +2105,7 @@ onBeforeUnmount(() => {
             class="curve-handle"
           />
         </g>
+        <rect v-if="marquee" :x="marquee.x" :y="marquee.y" :width="marquee.width" :height="marquee.height" fill="#4285f422" stroke="#4285f4" vector-effect="non-scaling-stroke" />
         <LaserTrail ref="laserTrail" :scale="viewport.scale" />
       </g>
     </svg>
@@ -1948,6 +2144,14 @@ onBeforeUnmount(() => {
       <RotateCw class="selection-rotate-icon" :stroke-width="1.6" />
     </div>
 
+    <div class="history-controls" role="group" aria-label="History controls" @pointerdown.stop @dblclick.stop>
+      <Button size="md" variant="ghost" theme="gray" label="Undo" title="Undo (Ctrl/⌘ Z)" :disabled="!canUndo" @click="undoScene">
+        <Undo2 class="history-control-icon" aria-hidden="true" />
+      </Button>
+      <Button size="md" variant="ghost" theme="gray" label="Redo" title="Redo (Ctrl/⌘ Shift Z)" :disabled="!canRedo" @click="redoScene">
+        <Redo2 class="history-control-icon" aria-hidden="true" />
+      </Button>
+    </div>
     <div class="viewport-controls" role="group" aria-label="Canvas zoom controls">
             <TooltipProvider>
               <Tooltip text="Zoom out" placement="top">
@@ -1988,11 +2192,34 @@ onBeforeUnmount(() => {
             </TooltipProvider>
     </div>
 
+    <p v-if="liveMessage.startsWith('Clipboard')" class="command-feedback">{{ liveMessage }}</p>
     <p class="sr-only" aria-live="polite" aria-atomic="true">{{ liveMessage }}</p>
   </section>
 </template>
 
 <style scoped>
+.command-feedback { position: absolute; left: 16px; bottom: 68px; max-width: min(440px, calc(100% - 32px)); padding: 10px 12px; border-radius: 8px; background: var(--surface-base); color: var(--ink-gray-9); font-size: 13px; box-shadow: var(--shadow-sm); pointer-events: none; }
+.history-controls {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--outline-gray-1);
+  border-radius: 10px;
+  background: var(--surface-base);
+  box-shadow: var(--shadow-sm);
+}
+
+.history-control-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
 .infinite-canvas {
   position: relative;
   z-index: 0;
@@ -2254,6 +2481,7 @@ onBeforeUnmount(() => {
 }
 
 @media (pointer: coarse) {
+  .history-controls :deep(button),
   .viewport-controls :deep(button) {
     min-width: 44px;
     min-height: 44px;

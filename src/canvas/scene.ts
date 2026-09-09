@@ -3,6 +3,7 @@ import type { Point } from './geometry'
 export type RectangleShape = {
   id: string
   groupId?: string
+  order?: number
   x: number
   y: number
   width: number
@@ -20,6 +21,7 @@ export type EllipseShape = RectangleShape & {
 export type LineShape = {
   id: string
   groupId?: string
+  order?: number
   kind: 'line'
   start: Point
   end: Point
@@ -82,4 +84,9 @@ function angleConstrainedEndPoint(start: Point, end: Point): Point {
   const angle = Math.round((Math.atan2(deltaY, deltaX) * 180) / Math.PI / 45) * 45
   const radians = (angle * Math.PI) / 180
   return { x: start.x + length * Math.cos(radians), y: start.y + length * Math.sin(radians) }
+}
+
+export function createId(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return prefix + '-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }

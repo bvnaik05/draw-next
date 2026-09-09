@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { drawingTitle } from './canvas/persistence'
 import TextInput from 'frappe-ui/src/components/TextInput/TextInput.vue'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import drawLogo from './assets/draw-logo.svg'
@@ -6,12 +7,14 @@ import type { DrawingTool } from './canvas/tools'
 import DrawingToolbar from './components/DrawingToolbar.vue'
 import InfiniteCanvas from './components/InfiniteCanvas.vue'
 
-const title = ref('Untitled Drawing')
+const title = drawingTitle
+const titleDraft = ref(title.value)
 const editingTitle = ref(false)
 const titleInput = ref<{ el: HTMLInputElement | null } | null>(null)
 const activeTool = ref<DrawingTool | null>('select')
 
 function startRenaming() {
+  titleDraft.value = title.value
   editingTitle.value = true
   nextTick(() => {
     titleInput.value?.el?.focus()
@@ -20,8 +23,12 @@ function startRenaming() {
 }
 
 function finishRenaming() {
+  if (!editingTitle.value) return
+  title.value = titleDraft.value.trim() || 'Untitled Drawing'
   editingTitle.value = false
+  nextTick(() => document.querySelector<HTMLElement>('.infinite-canvas')?.focus())
 }
+function cancelRenaming() { titleDraft.value = title.value; finishRenaming() }
 
 function selectTool(tool: DrawingTool) {
   activeTool.value = tool
@@ -88,13 +95,14 @@ onBeforeUnmount(() => {
         <TextInput
           v-if="editingTitle"
           ref="titleInput"
-          v-model="title"
+          v-model="titleDraft"
           class="title-field"
           aria-label="Drawing title"
           spellcheck="false"
           variant="outline"
           @blur="finishRenaming"
           @keyup.enter="finishRenaming"
+          @keydown.esc.stop.prevent="cancelRenaming"
         />
         <button
           v-else
