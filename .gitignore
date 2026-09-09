@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vite/
+coverage/
+*.log
+
+.vercel/
+vercel.json
+.codex/
+AGENTS.md
