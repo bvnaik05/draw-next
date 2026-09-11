@@ -119,6 +119,7 @@ let marqueeGesture: { pointerId: number; start: Point; previous: string[] } | un
 const enteredGroup = ref<string>()
 const allShapes = computed(() => [...lines.value, ...rectangles.value].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)))
 const selectedShapes = computed(() => allShapes.value.filter(s => selectedShapeIds.value.includes(s.id)))
+const selectionCount = computed(() => selectedShapes.value.length)
 const combinedBounds = computed(() => bounds(selectedShapes.value))
 let creationLast: Point | undefined
 let rectangleGesture: { pointerId: number; start: Point } | undefined
@@ -150,6 +151,7 @@ const AUTO_PAN_EDGE = 48
 const AUTO_PAN_SPEED = 12
 const LABEL_PADDING = 12
 const MIN_LABEL_FONT_SIZE = 12
+const MAX_HISTORY_ENTRIES = 100
 
 let selectionGesture:
   | {
@@ -395,6 +397,11 @@ function commitScene(previousSelection = selectedShapeIds.value) {
   historySelections.push([...selectedShapeIds.value])
   history.splice(historyIndex + 1)
   history.push(next)
+  // ponytail: keep recent undo only; use compressed history if 100 entries is too short.
+  if (history.length > MAX_HISTORY_ENTRIES) {
+    history.shift()
+    historySelections.shift()
+  }
   historyIndex = history.length - 1
   historyVersion.value += 1
   queueSave(next)
@@ -473,10 +480,12 @@ function groupSelectedShapes(): boolean {
 }
 
 function setSelection(ids: string[]) {
-  selectedShapeIds.value = ids
-  selectedRectangleId.value = rectangles.value.find(s => s.id === ids.at(-1))?.id
-  selectedLineId.value = lines.value.find(s => s.id === ids.at(-1))?.id
-  liveMessage.value = `${ids.length} objects selected`
+  const available = new Set(allShapes.value.map(shape => shape.id))
+  const selected = [...new Set(ids)].filter(id => available.has(id))
+  selectedShapeIds.value = selected
+  selectedRectangleId.value = rectangles.value.find(s => s.id === selected.at(-1))?.id
+  selectedLineId.value = lines.value.find(s => s.id === selected.at(-1))?.id
+  liveMessage.value = `${selected.length} objects selected`
 }
 
 function selectionScene(): SceneSnapshot {
@@ -1712,7 +1721,9 @@ function onKeyDown(event: KeyboardEvent) {
   }
   if (event.key === 'Tab' && event.target === root.value && allShapes.value.length) {
     const index = allShapes.value.findIndex(s => s.id === selectedShapeIds.value.at(-1))
-    selectShape(allShapes.value[(index + (event.shiftKey ? -1 : 1) + allShapes.value.length) % allShapes.value.length]!)
+    const shape = allShapes.value[(index + (event.shiftKey ? -1 : 1) + allShapes.value.length) % allShapes.value.length]!
+    selectShape(shape)
+    liveMessage.value = `Selected ${shapeLabel(shape)}`
     event.preventDefault(); return
   }
   if ((event.ctrlKey || event.metaKey) && key === 'z') {
@@ -1737,6 +1748,7 @@ function onKeyDown(event: KeyboardEvent) {
     return
   }
   if ((event.key === 'Delete' || event.key === 'Backspace') && deleteSelectedShape()) {
+    liveMessage.value = 'Selection deleted'
     event.preventDefault()
     return
   }
@@ -1825,6 +1837,16 @@ function onResize(width: number, height: number) {
   Object.assign(size, nextSize)
 }
 
+function recoverBeforeExit() {
+  finishTextEditor()
+  cancelGesture()
+  void saveDrawing()
+}
+
+function onVisibilityChange() {
+  if (document.hidden) recoverBeforeExit()
+}
+
 watch(() => props.activeTool, (tool, previous) => {
   if (tool !== 'laser' && previous !== 'laser') return
   cancelGesture()
@@ -1863,7 +1885,8 @@ onMounted(async () => {
   resizeObserver.observe(root.value)
   window.addEventListener('blur', cancelGesture)
   window.addEventListener('keyup', onKeyUp)
-  document.addEventListener('visibilitychange', cancelGesture)
+  window.addEventListener('pagehide', recoverBeforeExit)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onBeforeUnmount(() => {
@@ -1876,7 +1899,8 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   window.removeEventListener('blur', cancelGesture)
   window.removeEventListener('keyup', onKeyUp)
-  document.removeEventListener('visibilitychange', cancelGesture)
+  window.removeEventListener('pagehide', recoverBeforeExit)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   window.clearTimeout(announceTimer)
   if (viewportFrame !== undefined) window.cancelAnimationFrame(viewportFrame)
 })
@@ -1889,7 +1913,7 @@ onBeforeUnmount(() => {
     :class="cursorClass"
     tabindex="0"
     role="application"
-    aria-label="Drawing canvas"
+    :aria-label="`Drawing canvas, ${selectionCount} objects selected`"
 
 
     @pointerdown="onPointerDown"
@@ -1900,7 +1924,14 @@ onBeforeUnmount(() => {
     @dblclick="onDoubleClick"
     @wheel="onWheel"
   >
-    <svg class="canvas-surface" width="100%" height="100%" role="listbox" aria-label="Drawing objects" aria-multiselectable="true">
+    <svg
+      class="canvas-surface"
+      width="100%"
+      height="100%"
+      role="listbox"
+      :aria-label="`Drawing objects, ${selectionCount} of ${allShapes.length} selected`"
+      aria-multiselectable="true"
+    >
       <defs>
         <pattern
           id="sparse-dot-pattern"
@@ -1915,7 +1946,15 @@ onBeforeUnmount(() => {
       </defs>
       <rect width="100%" height="100%" fill="url(#sparse-dot-pattern)" />
       <g :transform="`translate(${viewport.translationX} ${viewport.translationY}) scale(${viewport.scale})`">
-        <g v-for="object in allShapes" :key="object.id" role="option" :aria-selected="selectedShapeIds.includes(object.id)" :aria-label="shapeLabel(object)">
+        <g
+          v-for="(object, index) in allShapes"
+          :key="object.id"
+          role="option"
+          :aria-label="shapeLabel(object)"
+          :aria-posinset="index + 1"
+          :aria-setsize="allShapes.length"
+          :aria-selected="selectedShapeIds.includes(object.id)"
+        >
         <line
           v-for="line in isLine(object) ? [object] : []"
           :key="line.id"

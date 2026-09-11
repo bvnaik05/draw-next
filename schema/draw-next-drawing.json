@@ -11,7 +11,7 @@
     { "fieldname": "scene", "label": "Scene", "fieldtype": "JSON", "reqd": 1 }
   ],
   "permissions": [
-    { "role": "All", "read": 1, "write": 1, "create": 1, "delete": 1, "if_owner": 1 },
+    { "role": "Desk User", "read": 1, "write": 1, "create": 1, "delete": 1, "if_owner": 1 },
     { "role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1 }
   ]
 }

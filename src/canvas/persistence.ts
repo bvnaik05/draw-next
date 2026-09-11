@@ -3,6 +3,7 @@ import { createId } from './scene'
 import { parseScene, type Scene } from './selection'
 
 type Drawing = { title: string; scene: Scene; baseModified?: string }
+type DrawingDocument = { title: string; scene: string | Scene; modified: string }
 const doctype = 'Draw Next Drawing'
 export const saveStatus = ref('Loading drawing…')
 export const drawingTitle = ref('Untitled Drawing')
@@ -17,6 +18,10 @@ async function request(path: string, method = 'GET', body?: unknown) {
   const response = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': csrf }, body: body === undefined ? undefined : JSON.stringify(body) })
   if (!response.ok) throw new Error(response.status === 409 || response.status === 417 ? 'Drawing changed in another tab. Reload before saving.' : `Save unavailable (${response.status})`)
   return response.json()
+}
+
+function documentPath() {
+  return `/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(name)}`
 }
 async function draftStore() {
   if (database) return database
@@ -55,8 +60,8 @@ export async function loadDrawing(): Promise<Scene | undefined> {
     }
     key = `${user}:${name}`
     const recovered = await draft('get').catch(() => undefined)
-    const result = await request(`/api/resource/${encodeURIComponent(doctype)}?filters=${encodeURIComponent(JSON.stringify([['name', '=', name]]))}&fields=${encodeURIComponent(JSON.stringify(['name', 'title', 'scene', 'modified']))}`)
-    const doc = result.data[0]
+    const result = await request(`/api/resource/${encodeURIComponent(doctype)}?filters=${encodeURIComponent(JSON.stringify([['name', '=', name]]))}&fields=${encodeURIComponent(JSON.stringify(['title', 'scene', 'modified']))}`)
+    const doc = result.data[0] as DrawingDocument | undefined
     if (doc) modified = doc.modified
     const drawing = recovered ?? (doc ? { title: doc.title, scene: parseScene(typeof doc.scene === 'string' ? JSON.parse(doc.scene) : doc.scene) } : undefined)
     if (drawing) drawing.scene = parseScene(drawing.scene)
@@ -90,12 +95,13 @@ export async function saveDrawing() {
   const next = pending
   saveStatus.value = 'Saving…'
   try {
-    const doc = { doctype, name, owner: user, title: next.title, scene: JSON.stringify(next.scene), ...(modified ? { modified } : {}) }
-    const result = await request(modified ? '/api/method/frappe.desk.form.save.savedocs' : `/api/resource/${encodeURIComponent(doctype)}`, 'POST', modified ? { doc: JSON.stringify(doc), action: 'Save' } : doc)
-    modified = modified ? result.docs[0].modified : result.data.modified
+    const document = { title: next.title, scene: JSON.stringify(next.scene), ...(modified ? { modified } : {}) }
+    const result = await request(modified ? documentPath() : `/api/resource/${encodeURIComponent(doctype)}`, modified ? 'PUT' : 'POST', modified ? document : { doctype, name, ...document })
+    modified = result.data.modified
     if (pending && pending !== next) { pending.baseModified = modified; await draft('put', pending) }
     if (pending === next) {
-      await draft('delete')
+      // A local cleanup failure must not turn a committed Frappe document into a failed save.
+      void draft('delete').catch(() => {})
       if (pending === next) { pending = undefined; dirty = false; saveStatus.value = 'Saved' }
     }
   } catch (error) { saveStatus.value = error instanceof Error ? error.message : 'Save failed; draft retained' }

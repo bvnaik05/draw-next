@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { drawingTitle } from './canvas/persistence'
+import { drawingTitle, saveStatus } from './canvas/persistence'
 import TextInput from 'frappe-ui/src/components/TextInput/TextInput.vue'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import drawLogo from './assets/draw-logo.svg'
@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
           {{ title }}
         </button>
       </h1>
-      <div class="header-side" aria-hidden="true" />
+      <p class="save-status" aria-live="polite">{{ saveStatus }}</p>
     </header>
     <DrawingToolbar :active-tool="activeTool" @select="selectTool" />
     <InfiniteCanvas
