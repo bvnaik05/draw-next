@@ -32,6 +32,13 @@ export function containsPoint(rectangle: RectangleShape, point: Point): boolean 
     if (radiusX === 0 || radiusY === 0) return false
     return ((local.x - center.x) / radiusX) ** 2 + ((local.y - center.y) / radiusY) ** 2 <= 1
   }
+  if ('kind' in rectangle && rectangle.kind === 'diamond') {
+    const center = rectangleCenter(rectangle)
+    const halfWidth = rectangle.width / 2
+    const halfHeight = rectangle.height / 2
+    if (halfWidth === 0 || halfHeight === 0) return false
+    return Math.abs(local.x - center.x) / halfWidth + Math.abs(local.y - center.y) / halfHeight <= 1
+  }
   return (
     local.x >= rectangle.x &&
     local.x <= rectangle.x + rectangle.width &&

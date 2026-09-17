@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { drawingTitle, saveStatus } from './canvas/persistence'
+import { drawingTitle } from './canvas/persistence'
 import TextInput from 'frappe-ui/src/components/TextInput/TextInput.vue'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import drawLogo from './assets/draw-logo.svg'
@@ -30,9 +30,7 @@ function finishRenaming() {
 }
 function cancelRenaming() { titleDraft.value = title.value; finishRenaming() }
 
-function selectTool(tool: DrawingTool) {
-  activeTool.value = tool
-}
+function selectTool(tool: DrawingTool) { activeTool.value = tool }
 
 function finishTool() {
   activeTool.value = 'select'
@@ -45,9 +43,18 @@ function onToolShortcut(event: KeyboardEvent) {
   if (event.key.toLowerCase() === 't') {
     event.preventDefault()
     selectTool('text')
+  } else if (event.key.toLowerCase() === 'i') {
+    event.preventDefault()
+    selectTool('image')
   } else if (event.key.toLowerCase() === 'k') {
     event.preventDefault()
     selectTool('laser')
+  } else if (event.key.toLowerCase() === 'd') {
+    event.preventDefault()
+    selectTool('diamond')
+  } else if (event.key.toLowerCase() === 'a') {
+    event.preventDefault()
+    selectTool('arrow')
   } else if (event.key === 'Escape') finishTool()
 }
 
@@ -114,18 +121,21 @@ onBeforeUnmount(() => {
           {{ title }}
         </button>
       </h1>
-      <p class="save-status" aria-live="polite">{{ saveStatus }}</p>
     </header>
     <DrawingToolbar :active-tool="activeTool" @select="selectTool" />
     <InfiniteCanvas
       :active-tool="activeTool"
       @activate-rectangle="activeTool = 'rectangle'"
+      @activate-diamond="activeTool = 'diamond'"
       @activate-ellipse="activeTool = 'ellipse'"
       @activate-line="activeTool = 'line'"
+      @activate-arrow="activeTool = 'arrow'"
       @activate-text="activeTool = 'text'"
+      @activate-image="activeTool = 'image'"
 
       @cancel-tool="activeTool = 'select'"
       @rectangle-created="finishTool"
+      @diamond-created="finishTool"
       @ellipse-created="finishTool"
       @line-created="finishTool"
     />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ellipseFromPoints, rectangleFromPoints } from './scene'
+import { diamondFromPoints, diamondPath, ellipseFromPoints, lineArrowHeadPath, lineFromPoints, linePath, rectangleFromPoints } from './scene'
 
 describe('rectangleFromPoints', () => {
   it('normalizes a rectangle drawn up and left from its start point', () => {
@@ -10,7 +10,7 @@ describe('rectangleFromPoints', () => {
       width: 60,
       height: 50,
       rotation: 0,
-      cornerRadius: 0,
+      cornerRadius: 8,
     })
   })
 
@@ -38,4 +38,30 @@ describe('ellipseFromPoints', () => {
       height: 30,
     })
   })
+})
+
+describe('diamondFromPoints', () => {
+  it('creates a rounded diamond from normalized bounds', () => {
+    const diamond = diamondFromPoints({ x: 80, y: 60 }, { x: 20, y: 10 }, 'diamond-1')
+
+    expect(diamond).toMatchObject({
+      id: 'diamond-1',
+      kind: 'diamond',
+      x: 20,
+      y: 10,
+      width: 60,
+      height: 50,
+      cornerRadius: 8,
+    })
+    expect(diamondPath(diamond)).toContain('Q')
+  })
+})
+
+it('builds curved arrow paths with an arrowhead tangent to the end', () => {
+  const arrow = lineFromPoints({ x: 0, y: 0 }, { x: 40, y: 0 }, 'arrow-1', false, 'arrow')
+  const curved = { ...arrow, curve: { x: 20, y: 10 } }
+
+  expect(curved.kind).toBe('arrow')
+  expect(linePath(curved)).toContain('Q')
+  expect(lineArrowHeadPath(curved)).toContain('Z')
 })

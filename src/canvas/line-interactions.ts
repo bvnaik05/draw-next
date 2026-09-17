@@ -3,13 +3,19 @@ import { constrainRotationAngle, normalizeAngle } from './rotation'
 import type { LineShape } from './scene'
 
 export type LineEndpoint = 'start' | 'end'
+export type LineHandle = LineEndpoint | 'curve'
 
 export function moveLine(line: LineShape, delta: Point): LineShape {
   return {
     ...line,
     start: { x: line.start.x + delta.x, y: line.start.y + delta.y },
     end: { x: line.end.x + delta.x, y: line.end.y + delta.y },
+    curve: typeof line.curve === 'object' ? { x: line.curve.x + delta.x, y: line.curve.y + delta.y } : line.curve,
   }
+}
+
+export function setLineCurve(line: LineShape, pointer: Point): LineShape {
+  return { ...line, curve: { ...pointer } }
 }
 
 export function rotateLineEndpoint(line: LineShape, endpoint: LineEndpoint, pointer: Point, constrainAngle = false): LineShape {

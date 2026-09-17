@@ -41,13 +41,16 @@ describe('drawing header', () => {
     const toolbar = wrapper.get('[aria-label="Drawing tools"]')
     const buttons = toolbar.findAll('button')
 
-    expect(buttons).toHaveLength(5)
+    expect(buttons).toHaveLength(8)
     expect(buttons.map((button) => button.attributes('aria-label'))).toEqual([
       'Select',
       'Rectangle',
+      'Diamond',
       'Ellipse',
       'Line',
+      'Arrows',
       'Text',
+      'More tools',
     ])
 
     expect(buttons[0].classes()).toContain('is-active')
@@ -60,6 +63,20 @@ describe('drawing header', () => {
 
     await buttons[3].trigger('click')
     expect(buttons[3].classes()).toContain('is-active')
+
+    await buttons[4].trigger('click')
+    expect(buttons[4].classes()).toContain('is-active')
+
+    await buttons[5].trigger('click')
+    expect(buttons[5].classes()).toContain('is-active')
+
+    await buttons[7].trigger('click')
+    expect(document.body.querySelector('[role="menu"]')).toBeTruthy()
+    const menuItems = Array.from(document.body.querySelectorAll('[role="menuitem"]'))
+    expect(menuItems.map((item) => item.textContent?.trim())).toEqual(['Insert image', 'Laser pointer'])
+    ;(menuItems[0] as HTMLElement).click()
+    await nextTick()
+    expect(buttons[7].classes()).toContain('is-active')
     wrapper.unmount()
   })
 

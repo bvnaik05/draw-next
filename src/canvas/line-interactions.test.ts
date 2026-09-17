@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rotateLineEndpoint } from './line-interactions'
+import { rotateLineEndpoint, setLineCurve } from './line-interactions'
 import type { LineShape } from './scene'
 
 const line: LineShape = {
@@ -22,5 +22,9 @@ describe('line interactions', () => {
     const rotated = rotateLineEndpoint(line, 'end', { x: 50, y: 70 })
 
     expect(rotated.end).toEqual({ x: 50, y: 70 })
+  })
+
+  it('stores curve offset from the line midpoint', () => {
+    expect(setLineCurve(line, { x: 20, y: 10 }).curve).toEqual({ x: 20, y: 10 })
   })
 })

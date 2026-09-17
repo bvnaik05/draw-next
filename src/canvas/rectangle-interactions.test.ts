@@ -119,6 +119,12 @@ describe('rectangle interactions', () => {
     expect(containsPoint(ellipse, { x: 10, y: 20 })).toBe(false)
   })
 
+  it('uses the diamond perimeter for hit testing', () => {
+    const diamond = { ...rectangle, kind: 'diamond' as const }
+    expect(containsPoint(diamond, { x: 30, y: 30 })).toBe(true)
+    expect(containsPoint(diamond, { x: 10, y: 20 })).toBe(false)
+  })
+
   it('keeps ellipse transformations on the shared bounds interaction path', () => {
     const ellipse = { ...rectangle, kind: 'ellipse' as const }
     expect(moveRectangle(ellipse, { x: -5, y: 12 })).toMatchObject({ x: 5, y: 32, kind: 'ellipse' })

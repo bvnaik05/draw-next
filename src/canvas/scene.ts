@@ -12,19 +12,35 @@ export type RectangleShape = {
   cornerRadius: number
   label?: string
   labelFontSize?: number
+  stroke?: string | null
+  fill?: string
+  strokeWidth?: number
+  strokeStyle?: 'solid' | 'dashed' | 'dotted'
+  opacity?: number
+  link?: string
 }
 
 export type EllipseShape = RectangleShape & {
   kind: 'ellipse'
 }
 
+export type DiamondShape = RectangleShape & {
+  kind: 'diamond'
+}
+
 export type LineShape = {
   id: string
   groupId?: string
   order?: number
-  kind: 'line'
+  kind: 'line' | 'arrow'
   start: Point
   end: Point
+  curve?: Point | number
+  stroke?: string | null
+  strokeWidth?: number
+  strokeStyle?: 'solid' | 'dashed' | 'dotted'
+  opacity?: number
+  link?: string
 }
 
 export type TextShape = RectangleShape & {
@@ -32,6 +48,23 @@ export type TextShape = RectangleShape & {
   text: string
   fontSize: number
   wrap: boolean
+  fontFamily?: TextFontFamily
+  fontWeight?: TextFontWeight
+  fontStyle?: 'normal' | 'italic'
+  textDecoration?: 'none' | 'underline' | 'line-through'
+  textAlign?: TextAlign
+}
+
+export type TextFontFamily = 'inter' | 'arial' | 'georgia' | 'mono'
+export type TextFontWeight = 400 | 500 | 600 | 700
+export type TextAlign = 'left' | 'center' | 'right'
+
+export type ImageShape = RectangleShape & {
+  kind: 'image'
+  src: string
+  naturalWidth?: number
+  naturalHeight?: number
+  crop?: { x: number; y: number; width: number; height: number }
 }
 
 export function rectangleFromPoints(
@@ -48,7 +81,7 @@ export function rectangleFromPoints(
     width: Math.abs(constrainedEnd.x - start.x),
     height: Math.abs(constrainedEnd.y - start.y),
     rotation: 0,
-    cornerRadius: 0,
+    cornerRadius: 8,
   }
 }
 
@@ -61,9 +94,79 @@ export function ellipseFromPoints(
   return { ...rectangleFromPoints(start, end, id, constrainProportions), kind: 'ellipse' }
 }
 
-export function lineFromPoints(start: Point, end: Point, id: string, constrainAngle = false): LineShape {
+export function diamondFromPoints(
+  start: Point,
+  end: Point,
+  id: string,
+  constrainProportions = false,
+): DiamondShape {
+  return { ...rectangleFromPoints(start, end, id, constrainProportions), kind: 'diamond' }
+}
+
+export function diamondPath(shape: RectangleShape): string {
+  const center = { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 }
+  const vertices = [
+    { x: center.x, y: shape.y },
+    { x: shape.x + shape.width, y: center.y },
+    { x: center.x, y: shape.y + shape.height },
+    { x: shape.x, y: center.y },
+  ]
+  const edgeLength = Math.hypot(shape.width / 2, shape.height / 2)
+  if (!edgeLength) return `M ${center.x} ${center.y}`
+  const offset = Math.min(Math.max(0, shape.cornerRadius), edgeLength / 2) / edgeLength
+  const rounded = vertices.map((vertex, index) => {
+    const previous = vertices[(index + vertices.length - 1) % vertices.length]!
+    const next = vertices[(index + 1) % vertices.length]!
+    return {
+      entry: { x: vertex.x + (previous.x - vertex.x) * offset, y: vertex.y + (previous.y - vertex.y) * offset },
+      exit: { x: vertex.x + (next.x - vertex.x) * offset, y: vertex.y + (next.y - vertex.y) * offset },
+    }
+  })
+  return rounded.map((corner, index) => {
+    const vertex = vertices[index]!
+    const next = rounded[(index + 1) % rounded.length]!
+    return `${index === 0 ? 'M' : 'L'} ${corner.entry.x} ${corner.entry.y} Q ${vertex.x} ${vertex.y} ${corner.exit.x} ${corner.exit.y} L ${next.entry.x} ${next.entry.y}`
+  }).join(' ') + ' Z'
+}
+
+export function lineFromPoints(start: Point, end: Point, id: string, constrainAngle = false, kind: LineShape['kind'] = 'line'): LineShape {
   const constrainedEnd = constrainAngle ? angleConstrainedEndPoint(start, end) : end
-  return { id, kind: 'line', start: { ...start }, end: { ...constrainedEnd } }
+  return { id, kind, start: { ...start }, end: { ...constrainedEnd } }
+}
+
+export function lineControlPoint(line: LineShape): Point {
+  const midpoint = { x: (line.start.x + line.end.x) / 2, y: (line.start.y + line.end.y) / 2 }
+  if (typeof line.curve === 'object' && line.curve) return { ...line.curve }
+  const delta = { x: line.end.x - line.start.x, y: line.end.y - line.start.y }
+  const length = Math.hypot(delta.x, delta.y)
+  if (!length) return midpoint
+  const curve = line.curve ?? 0
+  return { x: midpoint.x - (delta.y / length) * curve, y: midpoint.y + (delta.x / length) * curve }
+}
+
+export function linePath(line: LineShape): string {
+  const control = lineControlPoint(line)
+  return `M ${line.start.x} ${line.start.y} Q ${control.x} ${control.y} ${line.end.x} ${line.end.y}`
+}
+
+export function lineArrowHeadPath(line: LineShape, size = 8): string {
+  const control = lineControlPoint(line)
+  const direction = { x: line.end.x - control.x, y: line.end.y - control.y }
+  const length = Math.hypot(direction.x, direction.y)
+  if (!length) return ''
+  const unit = { x: direction.x / length, y: direction.y / length }
+  const base = { x: line.end.x - unit.x * size, y: line.end.y - unit.y * size }
+  const wing = { x: -unit.y * size * 0.55, y: unit.x * size * 0.55 }
+  return `M ${line.end.x} ${line.end.y} L ${base.x + wing.x} ${base.y + wing.y} L ${base.x - wing.x} ${base.y - wing.y} Z`
+}
+
+export function linePointAt(line: LineShape, t: number): Point {
+  const control = lineControlPoint(line)
+  const inverse = 1 - t
+  return {
+    x: inverse * inverse * line.start.x + 2 * inverse * t * control.x + t * t * line.end.x,
+    y: inverse * inverse * line.start.y + 2 * inverse * t * control.y + t * t * line.end.y,
+  }
 }
 
 function squareEndPoint(start: Point, end: Point): Point {

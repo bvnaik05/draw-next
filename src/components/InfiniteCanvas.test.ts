@@ -312,9 +312,7 @@ describe('InfiniteCanvas', () => {
     })
     await nextTick()
 
-    expect(wrapper.get('.drawn-line.is-pending').attributes()).toMatchObject({
-      x1: '10', y1: '20', x2: '80', y2: '60',
-    })
+    expect(wrapper.get('.drawn-line.is-pending').attributes('d')).toBe('M 10 20 Q 45 40 80 60')
 
     dispatchPointer(canvas.element, 'pointerup', {
       pointerId: 1,
@@ -487,9 +485,7 @@ describe('InfiniteCanvas', () => {
     })
     await nextTick()
 
-    expect(wrapper.get('.drawn-line').attributes()).toMatchObject({
-      x1: '20', y1: '40', x2: '90', y2: '70',
-    })
+    expect(wrapper.get('.drawn-line').attributes('d')).toBe('M 20 40 Q 55 55 90 70')
     wrapper.unmount()
   })
 
@@ -651,6 +647,29 @@ describe('InfiniteCanvas', () => {
     wrapper.unmount()
   })
 
+  it('shows individual frames and a move cursor inside a multi-selection', async () => {
+    const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'rectangle' } })
+    const canvas = wrapper.get('section')
+
+    for (const [pointerId, startX, endX] of [[1, 10, 50], [2, 100, 140]] as const) {
+      dispatchPointer(canvas.element, 'pointerdown', { pointerId, pointerType: 'mouse', clientX: startX, clientY: 10 })
+      dispatchPointer(canvas.element, 'pointermove', { pointerId, pointerType: 'mouse', clientX: endX, clientY: 30 })
+      dispatchPointer(canvas.element, 'pointerup', { pointerId, pointerType: 'mouse', clientX: endX, clientY: 30 })
+    }
+    await wrapper.setProps({ activeTool: 'select' })
+
+    dispatchPointer(canvas.element, 'pointerdown', { pointerId: 3, pointerType: 'mouse', clientX: 20, clientY: 20 })
+    dispatchPointer(canvas.element, 'pointerup', { pointerId: 3, pointerType: 'mouse', clientX: 20, clientY: 20 })
+    dispatchPointer(canvas.element, 'pointerdown', { pointerId: 4, pointerType: 'mouse', clientX: 110, clientY: 20, shiftKey: true })
+    dispatchPointer(canvas.element, 'pointerup', { pointerId: 4, pointerType: 'mouse', clientX: 110, clientY: 20, shiftKey: true })
+    dispatchPointer(canvas.element, 'pointermove', { pointerId: 5, pointerType: 'mouse', clientX: 75, clientY: 20 })
+    await nextTick()
+
+    expect(wrapper.findAll('.selection-item-outline')).toHaveLength(2)
+    expect(canvas.classes()).toContain('is-move-ready')
+    wrapper.unmount()
+  })
+
   it('discards an in-progress rectangle when the pointer is cancelled', async () => {
     const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'rectangle' } })
     const canvas = wrapper.get('section')
@@ -755,7 +774,7 @@ describe('InfiniteCanvas', () => {
     }
   })
 
-  it('pans text editing away from the canvas edge', async () => {
+  it('keeps text anchored while reflowing at the canvas edge', async () => {
     const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'select' } })
     const canvas = wrapper.get('section')
     vi.spyOn(canvas.element, 'getBoundingClientRect').mockReturnValue({
@@ -764,15 +783,15 @@ describe('InfiniteCanvas', () => {
 
     await canvas.trigger('dblclick', { clientX: 560, clientY: 20 })
     const editor = wrapper.get('textarea')
-    vi.spyOn(editor.element, 'getBoundingClientRect').mockReturnValue({
-      left: 560, top: 20, right: 680, bottom: 44, width: 120, height: 24,
-    } as DOMRect)
-    await editor.setValue('Long text')
-    await nextTick()
-    flushAnimationFrame()
-    await nextTick()
-
-    expect(editor.element.style.left).toBe('448px')
+    const transform = wrapper.get('.canvas-surface > g').attributes('transform')
+    const position = { left: editor.element.style.left, top: editor.element.style.top }
+    for (const value of ['iiiiiiiiiiii', 'WWWWWWWWWWWW', 'A B C\n123 !@#']) {
+      await editor.setValue(value)
+      await nextTick()
+      expect(editor.element.style.left).toBe(position.left)
+      expect(editor.element.style.top).toBe(position.top)
+      expect(wrapper.get('.canvas-surface > g').attributes('transform')).toBe(transform)
+    }
     wrapper.unmount()
   })
 
