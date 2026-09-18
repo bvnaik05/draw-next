@@ -1,14 +1,14 @@
 import type { Point } from './geometry'
 import { rectangleCorners, rectangleCenter, rotatePoint } from './rectangle-interactions'
 import { lineControlPoint } from './scene'
-import type { RectangleShape, TextShape, ImageShape, LineShape, TextAlign, TextFontFamily, TextFontWeight } from './scene'
+import type { RectangleShape, TextShape, ImageShape, LineShape, FreeDrawShape, TextAlign, TextFontFamily, TextFontWeight } from './scene'
 
-export type Shape = RectangleShape | TextShape | ImageShape | LineShape
-export type Scene = { rectangles: (RectangleShape | TextShape | ImageShape)[]; lines: LineShape[] }
+export type Shape = RectangleShape | TextShape | ImageShape | FreeDrawShape | LineShape
+export type Scene = { rectangles: (RectangleShape | TextShape | ImageShape | FreeDrawShape)[]; lines: LineShape[] }
 export function isLine(shape: Shape): shape is LineShape { return 'kind' in shape && (shape.kind === 'line' || shape.kind === 'arrow') }
 export function bounds(shapes: Shape[]): RectangleShape | undefined {
   if (!shapes.length) return
-  const points = shapes.flatMap(shape => isLine(shape) ? [shape.start, shape.end, lineControlPoint(shape)] : Object.values(rectangleCorners(shape)))
+  const points = shapes.flatMap(shape => isLine(shape) ? [shape.start, shape.end, lineControlPoint(shape)] : isFreeDraw(shape) ? shape.points : Object.values(rectangleCorners(shape)))
   const x = Math.min(...points.map(p => p.x)), y = Math.min(...points.map(p => p.y))
   return { id: 'selection', x, y, width: Math.max(...points.map(p => p.x)) - x, height: Math.max(...points.map(p => p.y)) - y, rotation: 0, cornerRadius: 0 }
 }
@@ -24,6 +24,11 @@ export function transformShape(shape: Shape, from: RectangleShape, to: Rectangle
       end: map(shape.end),
       curve: typeof shape.curve === 'object' ? map(shape.curve) : shape.curve === undefined ? undefined : shape.curve * Math.min(sx, sy),
     }
+  }
+  if (isFreeDraw(shape)) {
+    const points = shape.points.map(map)
+    const xs = points.map(point => point.x), ys = points.map(point => point.y)
+    return { ...shape, points, x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
   }
   const center = map(rectangleCenter(shape))
   const radians = shape.rotation * Math.PI / 180
@@ -64,7 +69,8 @@ export function parseScene(value: unknown): Scene {
     const numbers = isLine(shape) ? [shape.start?.x, shape.start?.y, shape.end?.x, shape.end?.y, ...curveNumbers] : [shape.x, shape.y, shape.width, shape.height, shape.rotation, shape.cornerRadius]
     if (!numbers.every(n => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) < 1e8)) throw new Error('Invalid geometry')
     if (!isLine(shape) && (shape.width < 0 || shape.height < 0)) throw new Error('Invalid size')
-    if ('kind' in shape && !['diamond', 'ellipse', 'text', 'image', 'line', 'arrow'].includes(String(shape.kind))) throw new Error('Invalid shape')
+    if ('kind' in shape && !['diamond', 'ellipse', 'text', 'image', 'freedraw', 'line', 'arrow'].includes(String(shape.kind))) throw new Error('Invalid shape')
+    if (isFreeDraw(shape) && (!Array.isArray(shape.points) || shape.points.length > 100000 || !shape.points.flatMap(point => [point.x, point.y]).every(Number.isFinite))) throw new Error('Invalid free draw')
     const text = shape as TextShape
     if (text.kind === 'text') {
       if (typeof text.text !== 'string' || !Number.isFinite(text.fontSize) || text.fontSize <= 0) throw new Error('Invalid text')
@@ -85,3 +91,5 @@ export function parseScene(value: unknown): Scene {
   if (scene.rectangles.some(isLine) || scene.lines.some(s => !isLine(s))) throw new Error('Invalid shape list')
   return JSON.parse(JSON.stringify(scene)) as Scene
 }
+
+export function isFreeDraw(shape: Shape): shape is FreeDrawShape { return (shape as { kind?: string }).kind === 'freedraw' }

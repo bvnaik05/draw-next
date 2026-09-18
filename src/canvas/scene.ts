@@ -67,6 +67,25 @@ export type ImageShape = RectangleShape & {
   crop?: { x: number; y: number; width: number; height: number }
 }
 
+export type FreeDrawShape = RectangleShape & {
+  kind: 'freedraw'
+  points: Point[]
+  pressures: number[]
+  simulatePressure: boolean
+}
+
+export function freeDrawPath(shape: FreeDrawShape): string {
+  if (!shape.points.length) return ''
+  if (shape.points.length === 1) return `M ${shape.points[0]!.x} ${shape.points[0]!.y} l .01 0`
+  let path = `M ${shape.points[0]!.x} ${shape.points[0]!.y}`
+  for (let index = 1; index < shape.points.length - 1; index++) {
+    const point = shape.points[index]!, next = shape.points[index + 1]!
+    path += ` Q ${point.x} ${point.y} ${(point.x + next.x) / 2} ${(point.y + next.y) / 2}`
+  }
+  const last = shape.points.at(-1)!
+  return `${path} L ${last.x} ${last.y}`
+}
+
 export function rectangleFromPoints(
   start: Point,
   end: Point,

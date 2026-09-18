@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { defineComponent, h } from 'vue'
 import { Button } from 'frappe-ui'
 import Dropdown from 'frappe-ui/src/components/Dropdown/Dropdown.vue'
 import type { DropdownOptions } from 'frappe-ui/src/components/Dropdown/types'
 import Icon from 'frappe-ui/src/components/Icon/Icon.vue'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
-import { ArrowRight, Circle, Diamond, ImagePlus, Minus, MousePointer2, Pointer, Square, Type } from 'lucide-vue-next'
+import { ArrowRight, Circle, Diamond, Eraser, ImagePlus, Minus, MousePointer2, Pencil, Square, Type } from 'lucide-vue-next'
+import laserPointerIcon from '../assets/laser-pointer.svg?no-inline'
 import type { DrawingTool } from '../canvas/tools'
 
 const tools: ReadonlyArray<{ label: string; icon?: typeof Square; value: DrawingTool; shortcut?: string }> = [
@@ -15,6 +17,8 @@ const tools: ReadonlyArray<{ label: string; icon?: typeof Square; value: Drawing
   { label: 'Ellipse', icon: Circle, value: 'ellipse', shortcut: 'O' },
   { label: 'Line', icon: Minus, value: 'line', shortcut: 'L' },
   { label: 'Arrows', icon: ArrowRight, value: 'arrow', shortcut: 'A' },
+  { label: 'Draw', icon: Pencil, value: 'draw', shortcut: 'P' },
+  { label: 'Eraser', icon: Eraser, value: 'eraser', shortcut: 'E' },
   { label: 'Text', icon: Type, value: 'text', shortcut: 'T' },
 ]
 
@@ -22,9 +26,13 @@ defineProps<{ activeTool: DrawingTool | null }>()
 
 const emit = defineEmits<{ select: [tool: DrawingTool] }>()
 
+const LaserPointerIcon = defineComponent(() => () => h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true' }, [
+  h('use', { href: `${laserPointerIcon}#laser-pointer` }),
+]))
+
 const overflowTools: DropdownOptions = [
   { label: 'Insert image', icon: ImagePlus, onClick: () => emit('select', 'image') },
-  { label: 'Laser pointer', icon: Pointer, onClick: () => emit('select', 'laser') },
+  { label: 'Laser pointer', icon: LaserPointerIcon, onClick: () => emit('select', 'laser') },
 ]
 </script>
 
@@ -35,7 +43,7 @@ const overflowTools: DropdownOptions = [
         <Tooltip v-for="tool in tools" :key="tool.label" :text="tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label" placement="top">
           <Button
             class="drawing-tool"
-            size="xs"
+            size="sm"
             variant="ghost"
             theme="gray"
             :label="tool.label"
@@ -49,21 +57,14 @@ const overflowTools: DropdownOptions = [
           </Button>
         </Tooltip>
         <span class="drawing-toolbar__separator" aria-hidden="true" />
-        <Dropdown align="end" :options="overflowTools">
-          <template #trigger="{ open }">
-            <Button
-              class="drawing-tool drawing-tool--overflow"
-              size="xs"
-              variant="ghost"
-              theme="gray"
-              label="More tools"
-              icon="lucide-more-vertical"
-              :class="{ 'is-active': open || activeTool === 'image' || activeTool === 'laser' }"
-              :aria-expanded="open"
-              aria-haspopup="menu"
-            />
-          </template>
-        </Dropdown>
+        <Dropdown
+          class="drawing-tool"
+          align="end"
+          :offset="12"
+          :options="overflowTools"
+          :button="{ icon: 'lucide-more-horizontal', label: 'More tools' }"
+          :class="{ 'is-active': activeTool === 'image' || activeTool === 'laser' }"
+        />
       </div>
     </TooltipProvider>
   </nav>

@@ -12,8 +12,8 @@ type LayerAction = 'front' | 'forward' | 'backward' | 'back'
 type StylePatch = { stroke?: string | null; fill?: string; strokeWidth?: number; strokeStyle?: 'solid' | 'dashed' | 'dotted'; opacity?: number }
 type Swatch = { name: string; hex: string }
 
-const props = defineProps<{ shapes: Shape[]; layerActions: Record<LayerAction, boolean> }>()
-const emit = defineEmits<{ preview: [patch: StylePatch]; style: [patch: StylePatch]; layer: [action: LayerAction] }>()
+const props = withDefaults(defineProps<{ shapes: Shape[]; layerActions: Record<LayerAction, boolean>; draw?: boolean; variable?: boolean }>(), { draw: false, variable: false })
+const emit = defineEmits<{ preview: [patch: StylePatch]; style: [patch: StylePatch]; layer: [action: LayerAction]; pressure: [variable: boolean] }>()
 
 const borderColors: Swatch[] = [
   { name: 'Blue', hex: '#0070cc' }, { name: 'Green', hex: '#278f5e' }, { name: 'Red', hex: '#b52a2a' }, { name: 'Orange', hex: '#bd3e0c' },
@@ -22,7 +22,7 @@ const fillColors: Swatch[] = [
   { name: 'Blue', hex: '#e6f4ff' }, { name: 'Green', hex: '#e4faeb' }, { name: 'Red', hex: '#ffe7e7' }, { name: 'Yellow', hex: '#fff7d3' },
 ]
 const active = computed(() => props.shapes.at(-1))
-const showFill = computed(() => props.shapes.some(shape => !('kind' in shape && (shape.kind === 'line' || shape.kind === 'arrow' || shape.kind === 'image'))))
+const showFill = computed(() => !props.draw && props.shapes.some(shape => !('kind' in shape && (shape.kind === 'line' || shape.kind === 'arrow' || shape.kind === 'image'))))
 const style = computed(() => ({
   stroke: active.value?.stroke ?? '#171717', hasStroke: active.value?.stroke !== null, fill: active.value && 'fill' in active.value ? active.value.fill : undefined,
   strokeWidth: active.value?.strokeWidth ?? 2, strokeStyle: active.value?.strokeStyle ?? 'solid', opacity: active.value?.opacity ?? 1,
@@ -43,11 +43,11 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
   <aside v-if="shapes.length" class="shape-properties" aria-label="Shape properties" @pointerdown.stop @dblclick.stop>
     <TooltipProvider>
       <section>
-        <h2>Border</h2>
-        <div class="swatches" role="group" aria-label="Border color">
-          <ShapeColorPicker :color="style.stroke" label="Custom border color" target="border" @select="selectColor('stroke', $event)" />
+        <h2>{{ draw ? 'Stroke' : 'Border' }}</h2>
+        <div class="swatches" role="group" :aria-label="draw ? 'Stroke color' : 'Border color'">
+          <ShapeColorPicker :color="style.stroke" :label="draw ? 'Custom stroke color' : 'Custom border color'" target="border" @select="selectColor('stroke', $event)" />
           <span class="divider" />
-          <Tooltip text="None" placement="top"><Button class="swatch none" size="xs" variant="ghost" theme="gray" :class="{ selected: !style.hasStroke }" label="No border" @click="selectColor('stroke', undefined)" /></Tooltip>
+          <Tooltip v-if="!draw" text="None" placement="top"><Button class="swatch none" size="xs" variant="ghost" theme="gray" :class="{ selected: !style.hasStroke }" label="No border" @click="selectColor('stroke', undefined)" /></Tooltip>
           <Tooltip v-for="color in borderColors" :key="color.hex" :text="colorTitle(color)" placement="top">
             <Button class="swatch" size="xs" variant="ghost" theme="gray" :class="{ selected: style.stroke === color.hex }" :style="{ '--swatch': color.hex }" :label="colorTitle(color)" @click="selectColor('stroke', color.hex)" />
           </Tooltip>
@@ -63,7 +63,7 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
         </div>
       </section>
       <section>
-        <h2>Border width</h2>
+        <h2>{{ draw ? 'Stroke width' : 'Border width' }}</h2>
         <div class="options" role="group" aria-label="Border width">
           <Tooltip v-for="width in [1.5, 3, 5]" :key="width" :text="`${width}px border`" placement="top">
             <Button size="xs" variant="subtle" :theme="style.strokeWidth === width ? 'blue' : 'gray'" :label="`${width}px border`" @click="emit('style', { strokeWidth: width })">
@@ -73,8 +73,8 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
         </div>
       </section>
       <section>
-        <h2>Border style</h2>
-        <div class="options" role="group" aria-label="Border style">
+        <h2>{{ draw ? 'Stroke style' : 'Border style' }}</h2>
+        <div class="options" role="group" :aria-label="draw ? 'Stroke style' : 'Border style'">
           <Tooltip v-for="option in ['solid', 'dashed', 'dotted'] as const" :key="option" :text="option" placement="top">
             <Button size="xs" variant="subtle" :theme="style.strokeStyle === option ? 'blue' : 'gray'" :label="option" @click="emit('style', { strokeStyle: option })">
               <svg class="stroke-preview" viewBox="0 0 24 12" aria-hidden="true"><path d="M3 6h18" :class="option" /></svg>
@@ -82,12 +82,16 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
           </Tooltip>
         </div>
       </section>
+      <section v-if="draw">
+        <h2>Pressure</h2>
+        <div class="options" role="group" aria-label="Pressure"><Button size="xs" variant="subtle" :theme="!variable ? 'blue' : 'gray'" label="Constant" @click="emit('pressure', false)" /><Button size="xs" variant="subtle" :theme="variable ? 'blue' : 'gray'" label="Variable" @click="emit('pressure', true)" /></div>
+      </section>
       <section>
         <Slider v-model="opacity" size="sm" :aria-label="`Opacity ${opacityLabel}`" @update:model-value="previewOpacity" @value-commit="emit('style', { opacity: $event[0]! / 100 })">
           <template #label>Opacity <output>{{ opacityLabel }}</output></template>
         </Slider>
       </section>
-      <section>
+      <section v-if="!draw">
         <h2>Layers</h2>
         <div class="options layers" role="group" aria-label="Layers">
           <Tooltip text="Send to back" placement="top"><Button size="xs" variant="subtle" theme="gray" label="Send to back" :disabled="!layerActions.back" @click="emit('layer', 'back')"><ArrowDownToLine :stroke-width="1.5" /></Button></Tooltip>

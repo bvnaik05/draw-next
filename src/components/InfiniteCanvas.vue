@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { loadDrawing, queueSave, drawingTitle, warnUnsaved, saveDrawing, drawingLoading } from '../canvas/persistence'
-import { bounds, transformShape, isLine, parseScene, type Shape } from '../canvas/selection'
+import { bounds, transformShape, isFreeDraw, isLine, parseScene, type Shape } from '../canvas/selection'
 import { Button } from 'frappe-ui'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
@@ -24,12 +24,14 @@ import {
   diamondFromPoints,
   diamondPath,
   ellipseFromPoints,
+  freeDrawPath,
   lineFromPoints,
   lineControlPoint,
   lineArrowHeadPath,
   linePointAt,
   linePath,
   type ImageShape,
+  type FreeDrawShape,
   rectangleFromPoints,
   type LineShape,
   type RectangleShape,
@@ -74,6 +76,8 @@ const emit = defineEmits<{
   activateArrow: []
   activateText: []
   activateImage: []
+  activateDraw: []
+  activateEraser: []
   cancelTool: []
   rectangleCreated: []
   diamondCreated: []
@@ -84,6 +88,7 @@ const emit = defineEmits<{
 const root = ref<HTMLElement>()
 const fileInput = ref<HTMLInputElement>()
 const laserTrail = ref<InstanceType<typeof LaserTrail>>()
+const eraserTrail = ref<InstanceType<typeof LaserTrail>>()
 let laserPointerId: number | undefined
 let cancellingGesture = false
 let shiftClickShape: Shape | undefined
@@ -99,13 +104,17 @@ const isShiftPressed = ref(false)
 const awaitingTouchRelease = ref(false)
 const liveMessage = ref('Zoom 100%')
 const linkHover = ref<{ link: string; point: Point }>()
-const rectangles = ref<(RectangleShape | TextShape | ImageShape)[]>([])
+const rectangles = ref<(RectangleShape | TextShape | ImageShape | FreeDrawShape)[]>([])
 const lines = ref<LineShape[]>([])
 const history: SceneSnapshot[] = [{ rectangles: [], lines: [] }]
 const historySelections: string[][] = [[]]
 const pendingRectangle = ref<RectangleShape>()
 const pendingLine = ref<LineShape>()
 const pendingText = ref<RectangleShape>()
+const pendingDraw = ref<FreeDrawShape>()
+const erasedShapeIds = ref<string[]>([])
+const drawStyle = reactive({ stroke: '#171717', strokeWidth: 3, strokeStyle: 'solid' as const, opacity: 1, variable: false })
+const drawPropertiesShape = computed<RectangleShape[]>(() => [{ id: 'draw-style', x: 0, y: 0, width: 0, height: 0, rotation: 0, cornerRadius: 0, ...drawStyle }])
 const croppingImageId = ref<string>()
 const cropFrame = ref<RectangleShape>()
 const textEditor = ref<TextEditor>()
@@ -153,11 +162,15 @@ const combinedBounds = computed(() => bounds(selectedShapes.value))
 let creationLast: Point | undefined
 let rectangleGesture: { pointerId: number; start: Point } | undefined
 let lineGesture: { pointerId: number; start: Point } | undefined
+let drawPointerId: number | undefined
+let eraserPointerId: number | undefined
+let eraserLastPoint: Point | undefined
+let eraseOriginal: SceneSnapshot | undefined
 let textGesture: { pointerId: number; start: Point; end?: Point } | undefined
 let cropGesture: { pointerId: number; start: Point } | undefined
 let historyIndex = 0
 const historyVersion = ref(0)
-type SceneSnapshot = { rectangles: (RectangleShape | TextShape | ImageShape)[]; lines: LineShape[] }
+type SceneSnapshot = { rectangles: (RectangleShape | TextShape | ImageShape | FreeDrawShape)[]; lines: LineShape[] }
 type TextEditor = {
   kind: 'text' | 'label'
   text: string
@@ -223,7 +236,8 @@ const zoomLabel = computed(() => `${Math.round(viewport.scale * 100)}%`)
 const cursorClass = computed(() => ({
   'is-pan-ready': isSpacePressed.value && !isPanning.value,
   'is-panning': isPanning.value,
-  'is-drawing-shape': ['rectangle', 'diamond', 'ellipse', 'line', 'arrow', 'image'].includes(props.activeTool ?? ''),
+  'is-drawing-shape': ['rectangle', 'diamond', 'ellipse', 'line', 'arrow', 'draw', 'image'].includes(props.activeTool ?? ''),
+  'is-erasing': props.activeTool === 'eraser',
   'is-text-ready': props.activeTool === 'text',
   'is-laser-ready': props.activeTool === 'laser' && !isSpacePressed.value && !isPanning.value,
   'is-rotation-ready': hoveredSelectionHandle.value === 'rotate' && !isRotating.value,
@@ -429,7 +443,7 @@ function resetZoom() {
 
 function copyScene(scene: SceneSnapshot = { rectangles: rectangles.value, lines: lines.value }): SceneSnapshot {
   return {
-    rectangles: scene.rectangles.map((rectangle) => ({ ...rectangle })),
+    rectangles: scene.rectangles.map((rectangle) => isFreeDraw(rectangle) ? { ...rectangle, points: rectangle.points.map(point => ({ ...point })), pressures: [...rectangle.pressures] } : { ...rectangle }),
     lines: scene.lines.map((line) => ({ ...line, start: { ...line.start }, end: { ...line.end } })),
   }
 }
@@ -743,7 +757,7 @@ function ungroupSelection() {
 }
 
 function shapeLabel(shape: Shape) {
-  return isLine(shape) ? (shape.kind === 'arrow' ? 'Arrow' : 'Line') : isImage(shape) ? 'Image' : isText(shape) ? shape.text : shape.label || (isDiamond(shape) ? 'Diamond' : isEllipse(shape) ? 'Ellipse' : 'Rectangle')
+  return isLine(shape) ? (shape.kind === 'arrow' ? 'Arrow' : 'Line') : isFreeDraw(shape) ? 'Drawing' : isImage(shape) ? 'Image' : isText(shape) ? shape.text : shape.label || (isDiamond(shape) ? 'Diamond' : isEllipse(shape) ? 'Ellipse' : 'Rectangle')
 }
 
 function textX(shape: TextShape): number {
@@ -1403,7 +1417,7 @@ function replaceLine(next: LineShape) {
 function shapeStyle(shape: Shape) {
   return {
     stroke: shape.stroke === null ? 'none' : shape.stroke ?? '#171717',
-    fill: isLine(shape) || isImage(shape) ? 'none' : shape.fill ?? 'none',
+    fill: isLine(shape) || isImage(shape) || isFreeDraw(shape) ? 'none' : shape.fill ?? 'none',
     strokeWidth: `${shape.strokeWidth ?? 2}px`,
     strokeDasharray: shape.strokeStyle === 'dashed' ? '8 5' : shape.strokeStyle === 'dotted' ? '1 5' : undefined,
     strokeLinecap: shape.strokeStyle === 'dotted' ? 'round' as const : undefined,
@@ -1629,19 +1643,19 @@ function isCurveHandle(handle: SelectionHandle): handle is CurveHandle {
   return handle.startsWith('curve-')
 }
 
-function isEllipse(shape: RectangleShape | LineShape): boolean {
+function isEllipse(shape: Shape): boolean {
   return (shape as { kind?: string }).kind === 'ellipse'
 }
 
-function isDiamond(shape: RectangleShape | LineShape): boolean {
+function isDiamond(shape: Shape): boolean {
   return (shape as { kind?: string }).kind === 'diamond'
 }
 
-function isText(shape: RectangleShape | LineShape): shape is TextShape {
+function isText(shape: Shape): shape is TextShape {
   return (shape as { kind?: string }).kind === 'text'
 }
 
-function isImage(shape: RectangleShape | LineShape): shape is ImageShape {
+function isImage(shape: Shape): shape is ImageShape {
   return (shape as { kind?: string }).kind === 'image'
 }
 
@@ -1719,6 +1733,106 @@ function shapeFromPoints(start: Point, end: Point, id: string, constrainProporti
   return rectangleFromPoints(start, end, id, constrainProportions)
 }
 
+function updateDrawStyle(patch: { stroke?: string | null; strokeWidth?: number; strokeStyle?: 'solid' | 'dashed' | 'dotted'; opacity?: number }) {
+  if (patch.stroke !== null) Object.assign(drawStyle, patch)
+}
+
+function beginDraw(event: PointerEvent, point: Point) {
+  const world = screenToWorld(point, latestViewport())
+  drawPointerId = event.pointerId
+  pendingDraw.value = {
+    id: 'pending-draw', kind: 'freedraw', points: [world], pressures: [event.pressure],
+    simulatePressure: !drawStyle.variable, x: world.x, y: world.y, width: 0, height: 0,
+    rotation: 0, cornerRadius: 0, stroke: drawStyle.stroke, strokeWidth: drawStyle.strokeWidth,
+    strokeStyle: drawStyle.strokeStyle, opacity: drawStyle.opacity,
+  }
+  root.value?.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+
+function updateDraw(event: PointerEvent) {
+  const shape = pendingDraw.value
+  if (!shape) return
+  const samples = event.getCoalescedEvents?.()
+  for (const sample of samples?.length ? samples : [event]) {
+    const point = screenToWorld(localPoint(sample), latestViewport())
+    if (distance(point, shape.points.at(-1)!) * viewport.scale < 1) continue
+    shape.points.push(point)
+    shape.pressures.push(sample.pressure)
+  }
+  const xs = shape.points.map(point => point.x), ys = shape.points.map(point => point.y)
+  Object.assign(shape, { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) })
+}
+
+function finishDraw(event: PointerEvent) {
+  if (drawPointerId !== event.pointerId || !pendingDraw.value) return false
+  if (event.type === 'pointerup') updateDraw(event)
+  const shape = { ...pendingDraw.value, id: nextId('draw'), points: [...pendingDraw.value.points], pressures: [...pendingDraw.value.pressures] }
+  rectangles.value.push(shape)
+  pendingDraw.value = undefined
+  drawPointerId = undefined
+  releasePointer(event.pointerId)
+  commitScene()
+  return true
+}
+
+function beginErase(event: PointerEvent, point: Point) {
+  eraserPointerId = event.pointerId
+  eraseOriginal = copyScene()
+  erasedShapeIds.value = []
+  eraserLastPoint = screenToWorld(point, latestViewport())
+  eraserTrail.value?.add(eraserLastPoint, true, event.timeStamp)
+  root.value?.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+
+function updateErase(event: PointerEvent) {
+  if (eraserPointerId !== event.pointerId) return
+  const next = screenToWorld(localPoint(event), latestViewport())
+  const previous = eraserLastPoint ?? next
+  eraserLastPoint = next
+  eraserTrail.value?.add(next, false, event.timeStamp)
+  const hits = allShapes.value.filter(shape => eraseHit(shape, previous, next)).flatMap(shape =>
+    shape.groupId ? allShapes.value.filter(candidate => candidate.groupId === shape.groupId).map(candidate => candidate.id) : [shape.id],
+  )
+  const ids = new Set(erasedShapeIds.value)
+  for (const id of hits) event.altKey ? ids.delete(id) : ids.add(id)
+  erasedShapeIds.value = [...ids]
+}
+
+function eraseHit(shape: Shape, start: Point, end: Point): boolean {
+  if (isLine(shape)) {
+    for (let index = 1, previous = linePointAt(shape, 0); index <= 20; index++) {
+      const current = linePointAt(shape, index / 20)
+      if (segmentDistance(start, end, previous, current) <= 8 / viewport.scale) return true
+      previous = current
+    }
+    return false
+  }
+  if (isFreeDraw(shape)) {
+    return shape.points.some((point, index) => index > 0 && segmentDistance(start, end, shape.points[index - 1]!, point) <= (shape.strokeWidth ?? 2) / 2 + 6 / viewport.scale)
+  }
+  const frame = bounds([shape])!
+  return containsPoint(frame, end) || segmentDistance(start, end, { x: frame.x, y: frame.y }, { x: frame.x + frame.width, y: frame.y + frame.height }) <= 6 / viewport.scale
+}
+
+function segmentDistance(a: Point, b: Point, c: Point, d: Point): number {
+  return Math.min(distanceToSegment(a, c, d), distanceToSegment(b, c, d), distanceToSegment(c, a, b), distanceToSegment(d, a, b))
+}
+
+function finishErase(event: PointerEvent) {
+  if (eraserPointerId !== event.pointerId) return false
+  if (event.type === 'pointerup') updateErase(event)
+  const ids = [...erasedShapeIds.value]
+  eraserPointerId = undefined
+  eraserLastPoint = undefined
+  erasedShapeIds.value = []
+  eraseOriginal = undefined
+  releasePointer(event.pointerId)
+  if (ids.length) deleteShapes(ids)
+  return true
+}
+
 function resizeCursor(handle: SelectionHandle | undefined): 'ns' | 'ew' | 'nwse' | 'nesw' | undefined {
   if (!handle || handle === 'rotate' || handle === 'line-curve' || isCurveHandle(handle)) return undefined
   const rotation = selectionFrame.value?.rotation ?? 0
@@ -1753,6 +1867,14 @@ function onPointerDown(event: PointerEvent) {
     root.value?.setPointerCapture(event.pointerId)
     laserTrail.value?.add(screenToWorld(point, latestViewport()), true, event.timeStamp)
     event.preventDefault()
+    return
+  }
+  if (props.activeTool === 'draw' && event.button === 0 && !isSpacePressed.value) {
+    beginDraw(event, point)
+    return
+  }
+  if (props.activeTool === 'eraser' && event.button === 0 && !isSpacePressed.value) {
+    beginErase(event, point)
     return
   }
   if (event.pointerType === 'touch') {
@@ -1828,6 +1950,8 @@ function onPointerDown(event: PointerEvent) {
 function onPointerMove(event: PointerEvent) {
   modifiers.alt = event.altKey
   modifiers.bypass = event.ctrlKey || event.metaKey
+  if (drawPointerId === event.pointerId) { updateDraw(event); event.preventDefault(); return }
+  if (eraserPointerId === event.pointerId) { updateErase(event); event.preventDefault(); return }
   if (pointers.has(event.pointerId)) pointers.set(event.pointerId, { ...localPoint(event), pointerType: event.pointerType })
   if (cropGesture?.pointerId === event.pointerId) {
     updateCropSelection(localPoint(event))
@@ -1934,6 +2058,8 @@ function onPointerMove(event: PointerEvent) {
 }
 
 function finishPointer(event: PointerEvent) {
+  if (finishDraw(event)) return
+  if (finishErase(event)) return
   if (finishCrop(event)) return
   if (!pinchStart && (marqueeGesture || rectangleGesture || lineGesture || textGesture || selectionGesture || lineSelectionGesture)) pointers.delete(event.pointerId)
   if (marqueeGesture?.pointerId === event.pointerId) {
@@ -1963,6 +2089,7 @@ function finishPointer(event: PointerEvent) {
 
 function cancelPointer(event: PointerEvent) {
   if (cancellingGesture) return
+  if (drawPointerId === event.pointerId || eraserPointerId === event.pointerId) { cancelGesture(); return }
   if (cropGesture?.pointerId === event.pointerId) { cancelCrop(); return }
   if (!pinchStart && (marqueeGesture || rectangleGesture || lineGesture || textGesture || selectionGesture || lineSelectionGesture)) pointers.delete(event.pointerId)
   if (marqueeGesture?.pointerId === event.pointerId) { cancelGesture(); return }
@@ -2004,6 +2131,16 @@ function cancelGesture() {
   marqueeGesture = undefined; marquee.value = undefined
   laserPointerId = undefined
   laserTrail.value?.clear()
+  if (drawPointerId !== undefined) releasePointer(drawPointerId)
+  if (eraserPointerId !== undefined) releasePointer(eraserPointerId)
+  drawPointerId = undefined
+  eraserPointerId = undefined
+  pendingDraw.value = undefined
+  eraserLastPoint = undefined
+  eraserTrail.value?.clear()
+  erasedShapeIds.value = []
+  if (eraseOriginal) restoreGestureScene(eraseOriginal)
+  eraseOriginal = undefined
   for (const id of pointers.keys()) {
     releasePointer(id)
   }
@@ -2169,6 +2306,12 @@ function onKeyDown(event: KeyboardEvent) {
   } else if (key === 'i' && !event.ctrlKey && !event.metaKey && !event.altKey) {
     emit('activateImage')
     event.preventDefault()
+  } else if (key === 'p') {
+    emit('activateDraw')
+    event.preventDefault()
+  } else if (key === 'e' || event.key === '0') {
+    emit('activateEraser')
+    event.preventDefault()
   } else if (event.key === 'Escape') {
     cancelGesture()
     clearSelection()
@@ -2231,6 +2374,7 @@ function onVisibilityChange() {
 
 watch(() => props.activeTool, (tool, previous) => {
   if (tool !== 'select') linkHover.value = undefined
+  if (tool !== previous && (drawPointerId !== undefined || eraserPointerId !== undefined)) cancelGesture()
   if (tool !== 'laser' && previous !== 'laser') return
   cancelGesture()
   if (tool === 'laser') {
@@ -2344,7 +2488,15 @@ onBeforeUnmount(() => {
           :aria-posinset="index + 1"
           :aria-setsize="allShapes.length"
           :aria-selected="selectedShapeIds.includes(object.id)"
+          :class="{ 'will-erase': erasedShapeIds.includes(object.id) }"
         >
+        <path
+          v-for="draw in isFreeDraw(object) ? [object] : []"
+          :key="draw.id"
+          :d="freeDrawPath(draw)"
+          class="free-draw"
+          :style="shapeStyle(draw)"
+        />
         <path
           v-for="line in isLine(object) ? [object] : []"
           :key="line.id"
@@ -2412,7 +2564,7 @@ onBeforeUnmount(() => {
           </text>
         </g>
         <g
-          v-for="rectangle in !isLine(object) && !isEllipse(object) && !isDiamond(object) && !isText(object) && !isImage(object) ? [object] : []"
+          v-for="rectangle in !isLine(object) && !isFreeDraw(object) && !isEllipse(object) && !isDiamond(object) && !isText(object) && !isImage(object) ? [object] : []"
           :key="rectangle.id"
           :transform="`rotate(${rectangle.rotation} ${rectangle.x + rectangle.width / 2} ${rectangle.y + rectangle.height / 2})`"
         >
@@ -2511,6 +2663,7 @@ onBeforeUnmount(() => {
           :d="linePath(pendingLine)"
           class="drawn-line is-pending"
         />
+        <path v-if="pendingDraw" :d="freeDrawPath(pendingDraw)" class="free-draw" :style="shapeStyle(pendingDraw)" />
         <path
           v-if="pendingLine?.kind === 'arrow'"
           :d="lineArrowHeadPath(pendingLine, 8 / viewport.scale)"
@@ -2636,6 +2789,7 @@ onBeforeUnmount(() => {
         </g>
         <rect v-if="marquee" :x="marquee.x" :y="marquee.y" :width="marquee.width" :height="marquee.height" fill="#4285f422" stroke="#4285f4" vector-effect="non-scaling-stroke" />
         <LaserTrail ref="laserTrail" :scale="viewport.scale" />
+        <LaserTrail ref="eraserTrail" :scale="viewport.scale" color="rgb(23 23 23 / 22%)" :radius="2.5" :duration="200" />
       </g>
     </svg>
 
@@ -2681,7 +2835,8 @@ onBeforeUnmount(() => {
       <RotateCw class="selection-rotate-icon" :stroke-width="1.6" />
     </div>
 
-    <TextProperties v-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @layer="reorderSelectedShapes" />
+    <ShapeProperties v-if="activeTool === 'draw'" draw :variable="drawStyle.variable" :shapes="drawPropertiesShape" :layer-actions="layerActions" @preview="updateDrawStyle" @style="updateDrawStyle" @pressure="drawStyle.variable = $event" />
+    <TextProperties v-else-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @layer="reorderSelectedShapes" />
     <ShapeProperties v-else :shapes="selectedShapes" :layer-actions="layerActions" @preview="previewSelectedStyle" @style="updateSelectedStyle" @layer="reorderSelectedShapes" />
 
     <div class="history-controls" role="group" aria-label="History controls" @pointerdown.stop @dblclick.stop>
@@ -2848,6 +3003,7 @@ onBeforeUnmount(() => {
 .drawn-diamond,
 .drawn-ellipse,
 .drawn-line,
+.free-draw,
 .drawn-image-border {
   fill: none;
   stroke: #171717;
@@ -2855,9 +3011,14 @@ onBeforeUnmount(() => {
   vector-effect: non-scaling-stroke;
 }
 
-.drawn-line {
+.drawn-line,
+.free-draw {
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
+
+.will-erase { opacity: .22; transition: opacity 180ms ease-out; }
+.infinite-canvas.is-erasing { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Ccircle cx='6' cy='6' r='4.5' fill='white' fill-opacity='.8' stroke='%23171717' stroke-opacity='.55'/%3E%3C/svg%3E") 6 6, crosshair; }
 
 .drawn-image-border { fill: none; }
 

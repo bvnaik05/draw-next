@@ -12,6 +12,7 @@ const titleDraft = ref(title.value)
 const editingTitle = ref(false)
 const titleInput = ref<{ el: HTMLInputElement | null } | null>(null)
 const activeTool = ref<DrawingTool | null>('select')
+let lastTool: DrawingTool = 'select'
 
 function startRenaming() {
   titleDraft.value = title.value
@@ -30,10 +31,17 @@ function finishRenaming() {
 }
 function cancelRenaming() { titleDraft.value = title.value; finishRenaming() }
 
-function selectTool(tool: DrawingTool) { activeTool.value = tool }
+function selectTool(tool: DrawingTool) {
+  if (tool === 'eraser' && activeTool.value !== 'eraser') lastTool = activeTool.value ?? 'select'
+  activeTool.value = tool
+}
 
 function finishTool() {
   activeTool.value = 'select'
+}
+
+function cancelTool() {
+  activeTool.value = activeTool.value === 'eraser' ? lastTool : 'select'
 }
 
 function onToolShortcut(event: KeyboardEvent) {
@@ -49,13 +57,19 @@ function onToolShortcut(event: KeyboardEvent) {
   } else if (event.key.toLowerCase() === 'k') {
     event.preventDefault()
     selectTool('laser')
+  } else if (event.key.toLowerCase() === 'p') {
+    event.preventDefault()
+    selectTool('draw')
+  } else if (event.key.toLowerCase() === 'e' || event.key === '0') {
+    event.preventDefault()
+    selectTool('eraser')
   } else if (event.key.toLowerCase() === 'd') {
     event.preventDefault()
     selectTool('diamond')
   } else if (event.key.toLowerCase() === 'a') {
     event.preventDefault()
     selectTool('arrow')
-  } else if (event.key === 'Escape') finishTool()
+  }
 }
 
 function isPageZoomShortcut(event: KeyboardEvent): boolean {
@@ -132,8 +146,10 @@ onBeforeUnmount(() => {
       @activate-arrow="activeTool = 'arrow'"
       @activate-text="activeTool = 'text'"
       @activate-image="activeTool = 'image'"
+      @activate-draw="activeTool = 'draw'"
+      @activate-eraser="selectTool('eraser')"
 
-      @cancel-tool="activeTool = 'select'"
+      @cancel-tool="cancelTool"
       @rectangle-created="finishTool"
       @diamond-created="finishTool"
       @ellipse-created="finishTool"
