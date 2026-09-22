@@ -63,6 +63,7 @@ import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
 import ShapeProperties from './ShapeProperties.vue'
 import TextProperties from './TextProperties.vue'
+import rotateCursorSvg from '../assets/rotate-cursor-white.svg?raw'
 
 type PointerSample = Point & { pointerType: string }
 type TextStylePatch = Partial<Pick<TextShape, 'fill' | 'fontFamily' | 'fontWeight' | 'fontStyle' | 'textDecoration' | 'textAlign' | 'opacity' | 'fontSize'>>
@@ -195,6 +196,12 @@ type SelectionHandle = ResizeHandle | CurveHandle | 'line-curve' | RotationHandl
 const HANDLE_HIT_RADIUS = 14
 const ROTATION_HANDLE_OFFSET = 24
 const ROTATION_HIT_RADIUS = 10
+const ROTATION_CURSOR_ANGLES: Record<Corner, number> = {
+  northwest: -90,
+  northeast: 0,
+  southeast: 90,
+  southwest: 180,
+}
 const LINE_HIT_RADIUS = 10
 const TEXT_DRAG_THRESHOLD = 6
 const AUTO_PAN_EDGE = 48
@@ -243,12 +250,6 @@ const cursorClass = computed(() => ({
   'is-erasing': props.activeTool === 'eraser',
   'is-text-ready': props.activeTool === 'text',
   'is-laser-ready': props.activeTool === 'laser' && !isSpacePressed.value && !isPanning.value,
-  'is-rotation-ready': isRotateHandle(hoveredSelectionHandle.value) && !isRotating.value,
-  'is-rotation-northwest': hoveredSelectionHandle.value === 'rotate-northwest',
-  'is-rotation-northeast': hoveredSelectionHandle.value === 'rotate-northeast',
-  'is-rotation-southeast': hoveredSelectionHandle.value === 'rotate-southeast',
-  'is-rotation-southwest': hoveredSelectionHandle.value === 'rotate-southwest',
-  'is-rotating': isRotating.value,
   'is-curve-ready': !isCurving.value && (hoveredSelectionHandle.value === 'line-curve' || Boolean(hoveredSelectionHandle.value && isCurveHandle(hoveredSelectionHandle.value))),
   'is-curving': isCurving.value,
   'is-move-ready': isMoveReady.value,
@@ -257,6 +258,14 @@ const cursorClass = computed(() => ({
   'is-resize-nwse': resizeCursor(hoveredSelectionHandle.value) === 'nwse',
   'is-resize-nesw': resizeCursor(hoveredSelectionHandle.value) === 'nesw',
 }))
+const rotationCursorStyle = computed(() => {
+  const handle = hoveredSelectionHandle.value
+  const rectangle = selectionFrame.value
+  if (!isRotateHandle(handle) || !rectangle) return undefined
+  const corner = (handle === 'rotate' ? 'northeast' : handle.slice('rotate-'.length)) as Corner
+  const angle = ROTATION_CURSOR_ANGLES[corner] + rectangle.rotation
+  return { cursor: `${rotationCursorUrl(angle)} ${isRotating.value ? 'grabbing' : 'grab'}` }
+})
 const selectedRectangle = computed(() =>
   rectangles.value.find((rectangle) => rectangle.id === selectedRectangleId.value),
 )
@@ -1568,6 +1577,13 @@ function rotationHandlePoint(corner: Point, center: Point): Point {
   }
 }
 
+function rotationCursorUrl(angle: number): string {
+  const bodyStart = rotateCursorSvg.indexOf('>') + 1
+  const bodyEnd = rotateCursorSvg.lastIndexOf('</svg>')
+  const svg = `${rotateCursorSvg.slice(0, bodyStart)}<g transform="rotate(${angle.toFixed(2)} 12 12)">${rotateCursorSvg.slice(bodyStart, bodyEnd)}</g></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12`
+}
+
 function rotationHandleAt(point: Point): RotationHandle | undefined {
   const handles = rotationHandles.value
   if (!handles) return undefined
@@ -2463,6 +2479,7 @@ onBeforeUnmount(() => {
     ref="root"
     class="infinite-canvas"
     :class="cursorClass"
+    :style="rotationCursorStyle"
     tabindex="0"
     role="application"
     :aria-label="`Drawing canvas, ${selectionCount} objects selected`"
@@ -2947,34 +2964,6 @@ onBeforeUnmount(() => {
 
 .infinite-canvas.is-text-ready {
   cursor: crosshair;
-}
-
-.infinite-canvas.is-rotation-ready {
-  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotating {
-  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-ready.is-rotation-northwest,
-.infinite-canvas.is-rotating.is-rotation-northwest {
-  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-ready.is-rotation-northeast,
-.infinite-canvas.is-rotating.is-rotation-northeast {
-  cursor: url('../assets/rotate-cursor-northeast.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-ready.is-rotation-southeast,
-.infinite-canvas.is-rotating.is-rotation-southeast {
-  cursor: url('../assets/rotate-cursor-southeast.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-ready.is-rotation-southwest,
-.infinite-canvas.is-rotating.is-rotation-southwest {
-  cursor: url('../assets/rotate-cursor-southwest.svg') 12 12, grab;
 }
 
 .infinite-canvas.is-curve-ready {
