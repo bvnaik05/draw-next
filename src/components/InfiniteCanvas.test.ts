@@ -226,7 +226,7 @@ describe('InfiniteCanvas', () => {
     wrapper.unmount()
   })
 
-  it('renders one non-overlapping rotation control', async () => {
+  it('uses corner-adjacent rotation zones without rendering a rotation control', async () => {
     const wrapper = mount(InfiniteCanvas, { props: { activeTool: 'rectangle' } })
     const canvas = wrapper.get('section')
 
@@ -237,7 +237,8 @@ describe('InfiniteCanvas', () => {
     flushAnimationFrame()
     await nextTick()
 
-    expect(wrapper.find('.selection-rotate-control').exists()).toBe(true)
+    expect(wrapper.find('.selection-rotate-control').exists()).toBe(false)
+    expect(wrapper.find('.rotation-stem').exists()).toBe(false)
     expect(wrapper.findAll('.selection-handle')).toHaveLength(4)
     wrapper.unmount()
   })

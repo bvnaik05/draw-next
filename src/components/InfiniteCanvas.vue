@@ -4,7 +4,7 @@ import { bounds, transformShape, isFreeDraw, isLine, parseScene, type Shape } fr
 import { Button } from 'frappe-ui'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
-import { Redo2, RotateCw, Undo2, ZoomIn, ZoomOut } from 'lucide-vue-next'
+import { Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   MAX_SCALE,
@@ -192,6 +192,8 @@ type ResizeHandle = Corner | Edge
 type CurveHandle = `curve-${Corner}`
 type SelectionHandle = ResizeHandle | CurveHandle | 'line-curve' | 'rotate'
 const HANDLE_HIT_RADIUS = 14
+const ROTATION_HANDLE_OFFSET = 24
+const ROTATION_HIT_RADIUS = 10
 const LINE_HIT_RADIUS = 10
 const TEXT_DRAG_THRESHOLD = 6
 const AUTO_PAN_EDGE = 48
@@ -342,21 +344,18 @@ const visibleCurveHandles = computed((): Record<string, Point> | undefined => {
 const showCurveControls = computed(() =>
   Boolean(!hasMultipleSelection.value && selectedRectangle.value && !isEllipse(selectedRectangle.value) && !isDiamond(selectedRectangle.value) && !isText(selectedRectangle.value) && isHoveringSelectedShape.value),
 )
-const rotationHandle = computed(() => {
+const rotationHandles = computed<Record<Corner, Point> | undefined>(() => {
+  const corners = selectionCorners.value
   const rectangle = selectionFrame.value
-  if (!rectangle) return undefined
-  const center = rectangleCenter(rectangle)
-  return rotatePoint({ x: center.x, y: rectangle.y - 28 / viewport.scale }, center, rectangle.rotation)
+  if (!corners || !rectangle) return undefined
+  const center = worldToScreen(rectangleCenter(rectangle), viewport)
+  return {
+    northwest: rotationHandlePoint(worldToScreen(corners.northwest, viewport), center),
+    northeast: rotationHandlePoint(worldToScreen(corners.northeast, viewport), center),
+    southeast: rotationHandlePoint(worldToScreen(corners.southeast, viewport), center),
+    southwest: rotationHandlePoint(worldToScreen(corners.southwest, viewport), center),
+  }
 })
-const rotationStemStart = computed(() => {
-  const rectangle = selectionFrame.value
-  if (!rectangle) return undefined
-  const center = rectangleCenter(rectangle)
-  return rotatePoint({ x: center.x, y: rectangle.y }, center, rectangle.rotation)
-})
-const rotationHandleScreen = computed(() =>
-  rotationHandle.value ? worldToScreen(rotationHandle.value, viewport) : undefined,
-)
 const isTextSelected = computed(() => Boolean(!hasMultipleSelection.value && selectedRectangle.value && isText(selectedRectangle.value)))
 const textLayouts = computed(() => new Map(rectangles.value.filter(isText).map((shape) => [
   shape.id, layoutText(shape.text, shape.width, shape.fontSize, shape.wrap, shape),
@@ -1380,15 +1379,6 @@ function finishSelection(event: PointerEvent, restore = false): boolean {
 }
 
 function selectionHandleAt(point: Point): SelectionHandle | undefined {
-  if (rotationHandle.value && distance(point, worldToScreen(rotationHandle.value, latestViewport())) <= HANDLE_HIT_RADIUS) {
-    return 'rotate'
-  }
-  if (showCurveControls.value && visibleCurveHandles.value) {
-    const curve = (Object.entries(visibleCurveHandles.value) as [Corner, Point][]).find(([, curvePoint]) =>
-      distance(point, worldToScreen(curvePoint, latestViewport())) <= HANDLE_HIT_RADIUS,
-    )?.[0]
-    if (curve) return `curve-${curve}`
-  }
   if (!selectionCorners.value) return undefined
   const frame = selectionFrame.value
   const cornerRadius = isTextSelected.value && frame
@@ -1398,6 +1388,13 @@ function selectionHandleAt(point: Point): SelectionHandle | undefined {
     distance(point, worldToScreen(cornerPoint, latestViewport())) <= cornerRadius,
   )?.[0]
   if (corner) return corner
+  if (showCurveControls.value && visibleCurveHandles.value) {
+    const curve = (Object.entries(visibleCurveHandles.value) as [Corner, Point][]).find(([, curvePoint]) =>
+      distance(point, worldToScreen(curvePoint, latestViewport())) <= HANDLE_HIT_RADIUS,
+    )?.[0]
+    if (curve) return `curve-${curve}`
+  }
+  if (rotationHandleAt(point)) return 'rotate'
   const edgeHitRadius = isTextSelected.value && frame
     ? Math.min(HANDLE_HIT_RADIUS, Math.max(4, Math.min(frame.width, frame.height) * viewport.scale / 4))
     : HANDLE_HIT_RADIUS
@@ -1554,6 +1551,23 @@ function curvePointer(rectangle: RectangleShape, corner: Corner, pointer: Point,
 
 function midpoint(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+function rotationHandlePoint(corner: Point, center: Point): Point {
+  const direction = { x: corner.x - center.x, y: corner.y - center.y }
+  const length = Math.hypot(direction.x, direction.y) || 1
+  return {
+    x: corner.x + direction.x / length * ROTATION_HANDLE_OFFSET,
+    y: corner.y + direction.y / length * ROTATION_HANDLE_OFFSET,
+  }
+}
+
+function rotationHandleAt(point: Point): Corner | undefined {
+  const handles = rotationHandles.value
+  if (!handles) return undefined
+  return (Object.entries(handles) as [Corner, Point][]).find(([, handle]) =>
+    distance(point, handle) <= ROTATION_HIT_RADIUS,
+  )?.[0]
 }
 
 function refreshActiveGesture() {
@@ -2715,7 +2729,7 @@ onBeforeUnmount(() => {
           />
         </g>
         <g
-          v-if="selectionFrame && selectionCorners && selectionEdges && rotationHandle && rotationStemStart"
+          v-if="selectionFrame && selectionCorners && selectionEdges"
           class="selection-overlay"
           :class="{ 'is-text-selection': isTextSelected, 'is-multiple-selection': hasMultipleSelection }"
         >
@@ -2736,13 +2750,6 @@ onBeforeUnmount(() => {
             :height="selectionFrame.height"
             :transform="`rotate(${selectionFrame.rotation} ${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
             class="selection-outline"
-          />
-          <line
-            :x1="rotationStemStart.x"
-            :y1="rotationStemStart.y"
-            :x2="rotationHandle.x"
-            :y2="rotationHandle.y"
-            class="rotation-stem"
           />
           <circle
             v-for="(corner, name) in selectionCorners"
@@ -2820,20 +2827,6 @@ onBeforeUnmount(() => {
       @input="updateTextEditor"
       @keydown="onTextEditorKeyDown"
     />
-
-    <div
-      v-if="rotationHandleScreen"
-      class="selection-rotate-control"
-      :class="{ 'is-highlighted': hoveredSelectionHandle === 'rotate' }"
-      :style="{
-        left: `${rotationHandleScreen.x}px`,
-        top: `${rotationHandleScreen.y}px`,
-        transform: 'translate(-50%, -50%)',
-      }"
-      aria-hidden="true"
-    >
-      <RotateCw class="selection-rotate-icon" :stroke-width="1.6" />
-    </div>
 
     <ShapeProperties v-if="activeTool === 'draw'" draw :variable="drawStyle.variable" :shapes="drawPropertiesShape" :layer-actions="layerActions" @preview="updateDrawStyle" @style="updateDrawStyle" @pressure="drawStyle.variable = $event" />
     <TextProperties v-else-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @layer="reorderSelectedShapes" />
@@ -2946,11 +2939,11 @@ onBeforeUnmount(() => {
 }
 
 .infinite-canvas.is-rotation-ready {
-  cursor: grab;
+  cursor: url('../assets/rotate-cursor.svg') 12 12, grab;
 }
 
 .infinite-canvas.is-rotating {
-  cursor: grabbing;
+  cursor: url('../assets/rotate-cursor.svg') 12 12, grabbing;
 }
 
 .infinite-canvas.is-curve-ready {
@@ -3103,7 +3096,6 @@ onBeforeUnmount(() => {
 
 .selection-outline,
 .selection-handle,
-.rotation-stem,
 .curve-handle,
 .text-box-preview {
   vector-effect: non-scaling-stroke;
@@ -3117,11 +3109,6 @@ onBeforeUnmount(() => {
   vector-effect: non-scaling-stroke;
 }
 
-.rotation-stem {
-  stroke: var(--selection-blue);
-  stroke-width: 1px;
-}
-
 .selection-handle {
   fill: var(--surface-white, #fff);
   stroke: var(--selection-blue);
@@ -3133,33 +3120,6 @@ onBeforeUnmount(() => {
   fill: var(--selection-blue);
 }
 
-.selection-rotate-control {
-  position: absolute;
-  z-index: 1;
-  display: flex;
-  width: 20px;
-  height: 20px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--selection-blue);
-  border-radius: 50%;
-  background: var(--surface-base);
-  color: var(--selection-blue);
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  transition: background-color 100ms ease, color 100ms ease;
-}
-
-.selection-rotate-control.is-highlighted {
-  background: var(--selection-blue);
-  color: var(--surface-white, #fff);
-}
-
-.selection-rotate-icon {
-  width: 13px;
-  height: 13px;
-}
-
 .curve-handle {
   fill: var(--surface-white, #fff);
   stroke: var(--selection-blue);
@@ -3167,8 +3127,7 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .selection-handle,
-  .selection-rotate-control {
+  .selection-handle {
     transition: none;
   }
 }
