@@ -63,6 +63,7 @@ import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
 import ShapeProperties from './ShapeProperties.vue'
 import TextProperties from './TextProperties.vue'
+import type { AlignAction, FlipAxis, FramePatch } from './ObjectLayoutProperties.vue'
 
 type PointerSample = Point & { pointerType: string }
 type TextStylePatch = Partial<Pick<TextShape, 'fill' | 'fontFamily' | 'fontWeight' | 'fontStyle' | 'textDecoration' | 'textAlign' | 'opacity' | 'fontSize'>>
@@ -151,6 +152,7 @@ const enteredGroup = ref<string>()
 const allShapes = computed(() => [...lines.value, ...rectangles.value].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)))
 const selectedShapes = computed(() => allShapes.value.filter(s => selectedShapeIds.value.includes(s.id)))
 const selectedTextShapes = computed(() => selectedShapes.value.every(isText) ? selectedShapes.value as TextShape[] : [])
+const showPropertiesPanel = computed(() => props.activeTool === 'draw' || selectedShapes.value.length > 0)
 const layerActions = computed(() => ({
   front: Boolean(reorderedSelectedShapes('front')),
   forward: Boolean(reorderedSelectedShapes('forward')),
@@ -1454,6 +1456,82 @@ function updateSelectedTextStyle(patch: TextStylePatch) {
   if (previewSelectedTextStyle(patch)) commitScene()
 }
 
+function updateSelectedFrame(patch: FramePatch) {
+  const selected = selectedShapes.value
+  const current = bounds(selected)
+  if (!current) return
+  const next = {
+    ...current,
+    x: patch.x ?? current.x,
+    y: patch.y ?? current.y,
+    width: Math.max(1, patch.width ?? current.width),
+    height: Math.max(1, patch.height ?? current.height),
+  }
+  const selectedIds = new Set(selectedShapeIds.value)
+  rectangles.value = rectangles.value.map(shape => selectedIds.has(shape.id) ? transformShape(shape, current, next) as typeof shape : shape)
+  lines.value = lines.value.map(shape => selectedIds.has(shape.id) ? transformShape(shape, current, next) as typeof shape : shape)
+  commitScene()
+}
+
+function updateSelectedTextWidthMode(mode: 'auto' | 'fixed') {
+  if (!selectedTextShapes.value.length) return
+  const selectedIds = new Set(selectedShapeIds.value)
+  rectangles.value = rectangles.value.map(shape => {
+    if (!selectedIds.has(shape.id) || !isText(shape)) return shape
+    const next = { ...shape, wrap: mode === 'fixed' }
+    const layout = layoutText(next.text, next.width, next.fontSize, next.wrap, next)
+    return fitTextBounds(next, mode === 'fixed' ? next.width : layout.width, layout.height)
+  })
+  commitScene()
+}
+
+function alignSelectedShapes(action: AlignAction) {
+  const selected = selectedShapes.value
+  const frame = bounds(selected)
+  if (!frame || selected.length < 2) return
+  const selectedIds = new Set(selectedShapeIds.value)
+  const align = (shape: Shape) => {
+    const item = bounds([shape])
+    if (!item) return shape
+    const x = action === 'left' ? frame.x : action === 'center-x' ? frame.x + (frame.width - item.width) / 2 : action === 'right' ? frame.x + frame.width - item.width : item.x
+    const y = action === 'top' ? frame.y : action === 'center-y' ? frame.y + (frame.height - item.height) / 2 : action === 'bottom' ? frame.y + frame.height - item.height : item.y
+    return transformShape(shape, item, { ...item, x, y })
+  }
+  rectangles.value = rectangles.value.map(shape => selectedIds.has(shape.id) ? align(shape) as typeof shape : shape)
+  lines.value = lines.value.map(shape => selectedIds.has(shape.id) ? align(shape) as typeof shape : shape)
+  commitScene()
+}
+
+function flipSelectedShapes(axis: FlipAxis) {
+  const selected = selectedShapes.value
+  const frame = bounds(selected)
+  if (!frame) return
+  const centerX = frame.x + frame.width / 2
+  const centerY = frame.y + frame.height / 2
+  const selectedIds = new Set(selectedShapeIds.value)
+  const reflect = (point: Point) => axis === 'horizontal'
+    ? { x: centerX * 2 - point.x, y: point.y }
+    : { x: point.x, y: centerY * 2 - point.y }
+  const flip = (shape: Shape): Shape => {
+    if (isLine(shape)) {
+      return { ...shape, start: reflect(shape.start), end: reflect(shape.end), curve: typeof shape.curve === 'object' ? reflect(shape.curve) : shape.curve }
+    }
+    if (isFreeDraw(shape)) {
+      const points = shape.points.map(reflect)
+      const xs = points.map(point => point.x), ys = points.map(point => point.y)
+      return { ...shape, points, x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
+    }
+    return {
+      ...shape,
+      x: axis === 'horizontal' ? frame.x + frame.width - (shape.x - frame.x) - shape.width : shape.x,
+      y: axis === 'vertical' ? frame.y + frame.height - (shape.y - frame.y) - shape.height : shape.y,
+    }
+  }
+  rectangles.value = rectangles.value.map(shape => selectedIds.has(shape.id) ? flip(shape) as typeof shape : shape)
+  lines.value = lines.value.map(shape => selectedIds.has(shape.id) ? flip(shape) as typeof shape : shape)
+  commitScene()
+}
+
 function reorderedSelectedShapes(action: 'front' | 'forward' | 'backward' | 'back') {
   const selected = new Set(selectedShapeIds.value)
   let ordered = [...allShapes.value]
@@ -2437,7 +2515,7 @@ onBeforeUnmount(() => {
   <section
     ref="root"
     class="infinite-canvas"
-    :class="cursorClass"
+    :class="[cursorClass, { 'has-properties-panel': showPropertiesPanel }]"
     tabindex="0"
     role="application"
     :aria-label="`Drawing canvas, ${selectionCount} objects selected`"
@@ -2835,9 +2913,11 @@ onBeforeUnmount(() => {
       <RotateCw class="selection-rotate-icon" :stroke-width="1.6" />
     </div>
 
-    <ShapeProperties v-if="activeTool === 'draw'" draw :variable="drawStyle.variable" :shapes="drawPropertiesShape" :layer-actions="layerActions" @preview="updateDrawStyle" @style="updateDrawStyle" @pressure="drawStyle.variable = $event" />
-    <TextProperties v-else-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @layer="reorderSelectedShapes" />
-    <ShapeProperties v-else :shapes="selectedShapes" :layer-actions="layerActions" @preview="previewSelectedStyle" @style="updateSelectedStyle" @layer="reorderSelectedShapes" />
+    <Teleport to="body">
+      <ShapeProperties v-if="activeTool === 'draw'" draw :variable="drawStyle.variable" :shapes="drawPropertiesShape" :layer-actions="layerActions" @preview="updateDrawStyle" @style="updateDrawStyle" @pressure="drawStyle.variable = $event" />
+      <TextProperties v-else-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @frame="updateSelectedFrame" @width-mode="updateSelectedTextWidthMode" @layer="reorderSelectedShapes" @align="alignSelectedShapes" @flip="flipSelectedShapes" />
+      <ShapeProperties v-else :shapes="selectedShapes" :layer-actions="layerActions" @preview="previewSelectedStyle" @style="updateSelectedStyle" @frame="updateSelectedFrame" @layer="reorderSelectedShapes" @align="alignSelectedShapes" @flip="flipSelectedShapes" />
+    </Teleport>
 
     <div class="history-controls" role="group" aria-label="History controls" @pointerdown.stop @dblclick.stop>
       <Button size="md" variant="ghost" theme="gray" label="Undo" title="Undo (Ctrl/⌘ Z)" :disabled="!canUndo" @click="undoScene">
@@ -2914,6 +2994,8 @@ onBeforeUnmount(() => {
   height: 15px;
   stroke-width: 1.5;
 }
+
+.infinite-canvas.has-properties-panel .history-controls { right: 272px; }
 
 .infinite-canvas {
   position: relative;
@@ -3215,6 +3297,10 @@ onBeforeUnmount(() => {
     min-width: 44px;
     min-height: 44px;
   }
+}
+
+@media (max-width: 640px) {
+  .infinite-canvas.has-properties-panel .history-controls { right: auto; bottom: 64px; left: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
