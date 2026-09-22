@@ -63,7 +63,6 @@ import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
 import ShapeProperties from './ShapeProperties.vue'
 import TextProperties from './TextProperties.vue'
-import rotateCursorSvg from '../assets/rotate-cursor-white.svg?raw'
 
 type PointerSample = Point & { pointerType: string }
 type TextStylePatch = Partial<Pick<TextShape, 'fill' | 'fontFamily' | 'fontWeight' | 'fontStyle' | 'textDecoration' | 'textAlign' | 'opacity' | 'fontSize'>>
@@ -250,6 +249,8 @@ const cursorClass = computed(() => ({
   'is-erasing': props.activeTool === 'eraser',
   'is-text-ready': props.activeTool === 'text',
   'is-laser-ready': props.activeTool === 'laser' && !isSpacePressed.value && !isPanning.value,
+  'is-rotation-ready': isRotateHandle(hoveredSelectionHandle.value) && !isRotating.value,
+  'is-rotating': isRotating.value,
   'is-curve-ready': !isCurving.value && (hoveredSelectionHandle.value === 'line-curve' || Boolean(hoveredSelectionHandle.value && isCurveHandle(hoveredSelectionHandle.value))),
   'is-curving': isCurving.value,
   'is-move-ready': isMoveReady.value,
@@ -258,13 +259,17 @@ const cursorClass = computed(() => ({
   'is-resize-nwse': resizeCursor(hoveredSelectionHandle.value) === 'nwse',
   'is-resize-nesw': resizeCursor(hoveredSelectionHandle.value) === 'nesw',
 }))
-const rotationCursorStyle = computed(() => {
+const rotationCursorAngle = computed<number | undefined>(() => {
   const handle = hoveredSelectionHandle.value
   const rectangle = selectionFrame.value
   if (!isRotateHandle(handle) || !rectangle) return undefined
   const corner = (handle === 'rotate' ? 'northeast' : handle.slice('rotate-'.length)) as Corner
   const angle = ROTATION_CURSOR_ANGLES[corner] + rectangle.rotation
-  return { cursor: `${rotationCursorUrl(angle)} ${isRotating.value ? 'grabbing' : 'grab'}` }
+  return (Math.round((((angle % 360) + 360) % 360) / 45) * 45) % 360
+})
+const rotationCursorClass = computed(() => {
+  const angle = rotationCursorAngle.value
+  return angle === undefined ? undefined : `is-rotation-angle-${angle}`
 })
 const selectedRectangle = computed(() =>
   rectangles.value.find((rectangle) => rectangle.id === selectedRectangleId.value),
@@ -1577,13 +1582,6 @@ function rotationHandlePoint(corner: Point, center: Point): Point {
   }
 }
 
-function rotationCursorUrl(angle: number): string {
-  const bodyStart = rotateCursorSvg.indexOf('>') + 1
-  const bodyEnd = rotateCursorSvg.lastIndexOf('</svg>')
-  const svg = `${rotateCursorSvg.slice(0, bodyStart)}<g transform="rotate(${angle.toFixed(2)} 12 12)">${rotateCursorSvg.slice(bodyStart, bodyEnd)}</g></svg>`
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12`
-}
-
 function rotationHandleAt(point: Point): RotationHandle | undefined {
   const handles = rotationHandles.value
   if (!handles) return undefined
@@ -2478,8 +2476,7 @@ onBeforeUnmount(() => {
   <section
     ref="root"
     class="infinite-canvas"
-    :class="cursorClass"
-    :style="rotationCursorStyle"
+    :class="[cursorClass, rotationCursorClass]"
     tabindex="0"
     role="application"
     :aria-label="`Drawing canvas, ${selectionCount} objects selected`"
@@ -2964,6 +2961,70 @@ onBeforeUnmount(() => {
 
 .infinite-canvas.is-text-ready {
   cursor: crosshair;
+}
+
+.infinite-canvas.is-rotation-angle-0 {
+  cursor: url('../assets/rotate-cursor-white.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-0.is-rotating {
+  cursor: url('../assets/rotate-cursor-white.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-45 {
+  cursor: url('../assets/rotate-cursor-45.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-45.is-rotating {
+  cursor: url('../assets/rotate-cursor-45.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-90 {
+  cursor: url('../assets/rotate-cursor-90.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-90.is-rotating {
+  cursor: url('../assets/rotate-cursor-90.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-135 {
+  cursor: url('../assets/rotate-cursor-135.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-135.is-rotating {
+  cursor: url('../assets/rotate-cursor-135.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-180 {
+  cursor: url('../assets/rotate-cursor-180.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-180.is-rotating {
+  cursor: url('../assets/rotate-cursor-180.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-225 {
+  cursor: url('../assets/rotate-cursor-225.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-225.is-rotating {
+  cursor: url('../assets/rotate-cursor-225.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-270 {
+  cursor: url('../assets/rotate-cursor-270.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-270.is-rotating {
+  cursor: url('../assets/rotate-cursor-270.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-angle-315 {
+  cursor: url('../assets/rotate-cursor-315.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-angle-315.is-rotating {
+  cursor: url('../assets/rotate-cursor-315.svg') 12 12, grabbing;
 }
 
 .infinite-canvas.is-curve-ready {
