@@ -190,7 +190,8 @@ type TextEditor = {
 }
 type ResizeHandle = Corner | Edge
 type CurveHandle = `curve-${Corner}`
-type SelectionHandle = ResizeHandle | CurveHandle | 'line-curve' | 'rotate'
+type RotationHandle = 'rotate' | `rotate-${Corner}`
+type SelectionHandle = ResizeHandle | CurveHandle | 'line-curve' | RotationHandle
 const HANDLE_HIT_RADIUS = 14
 const ROTATION_HANDLE_OFFSET = 24
 const ROTATION_HIT_RADIUS = 10
@@ -242,7 +243,11 @@ const cursorClass = computed(() => ({
   'is-erasing': props.activeTool === 'eraser',
   'is-text-ready': props.activeTool === 'text',
   'is-laser-ready': props.activeTool === 'laser' && !isSpacePressed.value && !isPanning.value,
-  'is-rotation-ready': hoveredSelectionHandle.value === 'rotate' && !isRotating.value,
+  'is-rotation-ready': isRotateHandle(hoveredSelectionHandle.value) && !isRotating.value,
+  'is-rotation-northwest': hoveredSelectionHandle.value === 'rotate-northwest',
+  'is-rotation-northeast': hoveredSelectionHandle.value === 'rotate-northeast',
+  'is-rotation-southeast': hoveredSelectionHandle.value === 'rotate-southeast',
+  'is-rotation-southwest': hoveredSelectionHandle.value === 'rotate-southwest',
   'is-rotating': isRotating.value,
   'is-curve-ready': !isCurving.value && (hoveredSelectionHandle.value === 'line-curve' || Boolean(hoveredSelectionHandle.value && isCurveHandle(hoveredSelectionHandle.value))),
   'is-curving': isCurving.value,
@@ -1149,15 +1154,15 @@ function startSelection(event: PointerEvent, point: Point) {
     hoveredSelectionHandle.value = rectangleHandle
     selectionGesture = {
       pointerId: event.pointerId,
-      kind: rectangleHandle === 'rotate' ? 'rotate' : isCurveHandle(rectangleHandle) ? 'curve' : 'resize',
-      handle: rectangleHandle === 'rotate' ? undefined : isCurveHandle(rectangleHandle) ? curveCorner(rectangleHandle) : rectangleHandle,
+      kind: isRotateHandle(rectangleHandle) ? 'rotate' : isCurveHandle(rectangleHandle) ? 'curve' : 'resize',
+      handle: isRotateHandle(rectangleHandle) ? undefined : isCurveHandle(rectangleHandle) ? curveCorner(rectangleHandle) : rectangleHandle,
       start: worldPoint,
       original: { ...rectangle },
       initial: { ...rectangle },
       originalScene: copyScene(),
-      handleStart: rectangleHandle === 'rotate' || isCurveHandle(rectangleHandle) ? undefined : resizeHandlePoint(rectangle, rectangleHandle),
+      handleStart: isRotateHandle(rectangleHandle) || isCurveHandle(rectangleHandle) ? undefined : resizeHandlePoint(rectangle, rectangleHandle),
     }
-    isRotating.value = rectangleHandle === 'rotate'
+    isRotating.value = isRotateHandle(rectangleHandle)
   } else {
     const topHit = [...allShapes.value].reverse().find(s => isLine(s) ? containsLine(s, point) : containsPoint(s, worldPoint))
     const hit = topHit && !isLine(topHit) ? topHit : undefined
@@ -1394,7 +1399,8 @@ function selectionHandleAt(point: Point): SelectionHandle | undefined {
     )?.[0]
     if (curve) return `curve-${curve}`
   }
-  if (rotationHandleAt(point)) return 'rotate'
+  const rotationHandle = rotationHandleAt(point)
+  if (rotationHandle) return rotationHandle
   const edgeHitRadius = isTextSelected.value && frame
     ? Math.min(HANDLE_HIT_RADIUS, Math.max(4, Math.min(frame.width, frame.height) * viewport.scale / 4))
     : HANDLE_HIT_RADIUS
@@ -1562,12 +1568,13 @@ function rotationHandlePoint(corner: Point, center: Point): Point {
   }
 }
 
-function rotationHandleAt(point: Point): Corner | undefined {
+function rotationHandleAt(point: Point): RotationHandle | undefined {
   const handles = rotationHandles.value
   if (!handles) return undefined
-  return (Object.entries(handles) as [Corner, Point][]).find(([, handle]) =>
+  const corner = (Object.entries(handles) as [Corner, Point][]).find(([, handle]) =>
     distance(point, handle) <= ROTATION_HIT_RADIUS,
   )?.[0]
+  return corner ? `rotate-${corner}` : undefined
 }
 
 function refreshActiveGesture() {
@@ -1655,6 +1662,10 @@ function curveCorner(handle: CurveHandle): Corner {
 
 function isCurveHandle(handle: SelectionHandle): handle is CurveHandle {
   return handle.startsWith('curve-')
+}
+
+function isRotateHandle(handle: SelectionHandle | undefined): handle is RotationHandle {
+  return handle === 'rotate' || Boolean(handle?.startsWith('rotate-'))
 }
 
 function isEllipse(shape: Shape): boolean {
@@ -1848,7 +1859,7 @@ function finishErase(event: PointerEvent) {
 }
 
 function resizeCursor(handle: SelectionHandle | undefined): 'ns' | 'ew' | 'nwse' | 'nesw' | undefined {
-  if (!handle || handle === 'rotate' || handle === 'line-curve' || isCurveHandle(handle)) return undefined
+  if (!handle || isRotateHandle(handle) || handle === 'line-curve' || isCurveHandle(handle)) return undefined
   const rotation = selectionFrame.value?.rotation ?? 0
   if (handle === 'north' || handle === 'south') return cursorForAngle(rotation + 90)
   if (handle === 'east' || handle === 'west') return cursorForAngle(rotation)
@@ -2939,11 +2950,31 @@ onBeforeUnmount(() => {
 }
 
 .infinite-canvas.is-rotation-ready {
-  cursor: url('../assets/rotate-cursor.svg') 12 12, grab;
+  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grab;
 }
 
 .infinite-canvas.is-rotating {
-  cursor: url('../assets/rotate-cursor.svg') 12 12, grabbing;
+  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grabbing;
+}
+
+.infinite-canvas.is-rotation-ready.is-rotation-northwest,
+.infinite-canvas.is-rotating.is-rotation-northwest {
+  cursor: url('../assets/rotate-cursor-northwest.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-ready.is-rotation-northeast,
+.infinite-canvas.is-rotating.is-rotation-northeast {
+  cursor: url('../assets/rotate-cursor-northeast.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-ready.is-rotation-southeast,
+.infinite-canvas.is-rotating.is-rotation-southeast {
+  cursor: url('../assets/rotate-cursor-southeast.svg') 12 12, grab;
+}
+
+.infinite-canvas.is-rotation-ready.is-rotation-southwest,
+.infinite-canvas.is-rotating.is-rotation-southwest {
+  cursor: url('../assets/rotate-cursor-southwest.svg') 12 12, grab;
 }
 
 .infinite-canvas.is-curve-ready {
