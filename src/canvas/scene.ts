@@ -12,6 +12,8 @@ export type RectangleShape = {
   cornerRadius: number
   label?: string
   labelFontSize?: number
+  labelFontFamily?: TextFontFamily
+  labelFill?: string
   stroke?: string | null
   fill?: string
   strokeWidth?: number
@@ -37,6 +39,7 @@ export type LineShape = {
   end: Point
   curve?: Point | number
   stroke?: string | null
+  arrowHeadFill?: string
   strokeWidth?: number
   strokeStyle?: 'solid' | 'dashed' | 'dotted'
   opacity?: number
@@ -46,6 +49,7 @@ export type LineShape = {
 export type TextShape = RectangleShape & {
   kind: 'text'
   text: string
+  backgroundColor?: string
   fontSize: number
   wrap: boolean
   fontFamily?: TextFontFamily
@@ -55,9 +59,9 @@ export type TextShape = RectangleShape & {
   textAlign?: TextAlign
 }
 
-export type TextFontFamily = 'inter' | 'arial' | 'georgia' | 'mono'
+export type TextFontFamily = 'shantell' | 'inter' | 'georgia' | 'mono'
 export type TextFontWeight = 400 | 500 | 600 | 700
-export type TextAlign = 'left' | 'center' | 'right'
+export type TextAlign = 'left' | 'center' | 'right' | 'justify'
 
 export type ImageShape = RectangleShape & {
   kind: 'image'

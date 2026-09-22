@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, ArrowUpToLine, Bold, ChevronDown, ChevronUp, Italic, Strikethrough, Underline } from 'lucide-vue-next'
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight, ArrowDownToLine, ArrowUpToLine, Bold, ChevronDown, ChevronUp, Italic, Strikethrough, Underline } from 'lucide-vue-next'
 import { Button } from 'frappe-ui'
 import Select from 'frappe-ui/src/components/Select/Select.vue'
 import Slider from 'frappe-ui/src/components/Slider/Slider.vue'
@@ -18,7 +18,7 @@ const emit = defineEmits<{ preview: [patch: TextStylePatch]; style: [patch: Text
 const active = computed(() => props.texts.at(-1))
 const style = computed(() => ({
   fill: active.value?.fill ?? '#171717',
-  fontFamily: active.value?.fontFamily ?? 'inter' as TextFontFamily,
+  fontFamily: active.value?.fontFamily ?? 'shantell' as TextFontFamily,
   fontWeight: active.value?.fontWeight ?? 400 as TextFontWeight,
   fontStyle: active.value?.fontStyle ?? 'normal' as const,
   textDecoration: active.value?.textDecoration ?? 'none' as const,
@@ -29,8 +29,8 @@ const style = computed(() => ({
 const opacity = ref([100])
 const opacityLabel = computed(() => `${opacity.value[0] ?? 100}%`)
 const fontOptions = [
+  { label: 'Shantell', value: 'shantell' },
   { label: 'Inter', value: 'inter' },
-  { label: 'Arial', value: 'arial' },
   { label: 'Georgia', value: 'georgia' },
   { label: 'Monospace', value: 'mono' },
 ] satisfies { label: string; value: TextFontFamily }[]
@@ -39,7 +39,7 @@ watch(style, value => {
   opacity.value = [Math.round(value.opacity * 100)]
 }, { immediate: true })
 
-function selectColor(color: string) { emit('style', { fill: color }) }
+function selectColor(color: string | undefined) { emit('style', { fill: color }) }
 function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] ?? 100) / 100 }) }
 </script>
 
@@ -64,7 +64,7 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
       <section>
         <h2>Align</h2>
         <div class="options" role="group" aria-label="Text alignment">
-          <Tooltip v-for="option in [{ value: 'left', label: 'Align left', icon: AlignLeft }, { value: 'center', label: 'Align center', icon: AlignCenter }, { value: 'right', label: 'Align right', icon: AlignRight }]" :key="option.value" :text="option.label" placement="top">
+          <Tooltip v-for="option in [{ value: 'left', label: 'Align left', icon: AlignLeft }, { value: 'center', label: 'Align center', icon: AlignCenter }, { value: 'right', label: 'Align right', icon: AlignRight }, { value: 'justify', label: 'Justify', icon: AlignJustify }]" :key="option.value" :text="option.label" placement="top">
             <Button size="xs" variant="subtle" :theme="style.textAlign === option.value ? 'blue' : 'gray'" :label="option.label" @click="emit('style', { textAlign: option.value as TextAlign })"><component :is="option.icon" :stroke-width="1.5" /></Button>
           </Tooltip>
         </div>
