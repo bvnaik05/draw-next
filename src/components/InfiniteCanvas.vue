@@ -63,6 +63,14 @@ import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
 import ShapeProperties from './ShapeProperties.vue'
 import TextProperties from './TextProperties.vue'
+import rotateCursor0 from '../assets/rotate-cursor-white.svg?url'
+import rotateCursor45 from '../assets/rotate-cursor-45.svg?url'
+import rotateCursor90 from '../assets/rotate-cursor-90.svg?url'
+import rotateCursor135 from '../assets/rotate-cursor-135.svg?url'
+import rotateCursor180 from '../assets/rotate-cursor-180.svg?url'
+import rotateCursor225 from '../assets/rotate-cursor-225.svg?url'
+import rotateCursor270 from '../assets/rotate-cursor-270.svg?url'
+import rotateCursor315 from '../assets/rotate-cursor-315.svg?url'
 
 type PointerSample = Point & { pointerType: string }
 type TextStylePatch = Partial<Pick<TextShape, 'fill' | 'fontFamily' | 'fontWeight' | 'fontStyle' | 'textDecoration' | 'textAlign' | 'opacity' | 'fontSize'>>
@@ -201,6 +209,16 @@ const ROTATION_CURSOR_ANGLES: Record<Corner, number> = {
   southeast: 90,
   southwest: 180,
 }
+const ROTATION_CURSOR_URLS: Record<number, string> = {
+  0: rotateCursor0,
+  45: rotateCursor45,
+  90: rotateCursor90,
+  135: rotateCursor135,
+  180: rotateCursor180,
+  225: rotateCursor225,
+  270: rotateCursor270,
+  315: rotateCursor315,
+}
 const LINE_HIT_RADIUS = 10
 const TEXT_DRAG_THRESHOLD = 6
 const AUTO_PAN_EDGE = 48
@@ -270,6 +288,13 @@ const rotationCursorAngle = computed<number | undefined>(() => {
 const rotationCursorClass = computed(() => {
   const angle = rotationCursorAngle.value
   return angle === undefined ? undefined : `is-rotation-angle-${angle}`
+})
+const rotationCursorStyle = computed(() => {
+  const angle = rotationCursorAngle.value
+  if (angle === undefined) return undefined
+  return {
+    cursor: `url("${ROTATION_CURSOR_URLS[angle]}") 12 12, ${isRotating.value ? 'grabbing' : 'grab'}`,
+  }
 })
 const selectedRectangle = computed(() =>
   rectangles.value.find((rectangle) => rectangle.id === selectedRectangleId.value),
@@ -2477,6 +2502,7 @@ onBeforeUnmount(() => {
     ref="root"
     class="infinite-canvas"
     :class="[cursorClass, rotationCursorClass]"
+    :style="rotationCursorStyle"
     tabindex="0"
     role="application"
     :aria-label="`Drawing canvas, ${selectionCount} objects selected`"
@@ -2963,68 +2989,12 @@ onBeforeUnmount(() => {
   cursor: crosshair;
 }
 
-.infinite-canvas.is-rotation-angle-0 {
-  cursor: url('../assets/rotate-cursor-white.svg') 12 12, grab;
+.infinite-canvas.is-rotation-ready {
+  cursor: grab;
 }
 
-.infinite-canvas.is-rotation-angle-0.is-rotating {
-  cursor: url('../assets/rotate-cursor-white.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-45 {
-  cursor: url('../assets/rotate-cursor-45.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-45.is-rotating {
-  cursor: url('../assets/rotate-cursor-45.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-90 {
-  cursor: url('../assets/rotate-cursor-90.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-90.is-rotating {
-  cursor: url('../assets/rotate-cursor-90.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-135 {
-  cursor: url('../assets/rotate-cursor-135.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-135.is-rotating {
-  cursor: url('../assets/rotate-cursor-135.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-180 {
-  cursor: url('../assets/rotate-cursor-180.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-180.is-rotating {
-  cursor: url('../assets/rotate-cursor-180.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-225 {
-  cursor: url('../assets/rotate-cursor-225.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-225.is-rotating {
-  cursor: url('../assets/rotate-cursor-225.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-270 {
-  cursor: url('../assets/rotate-cursor-270.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-270.is-rotating {
-  cursor: url('../assets/rotate-cursor-270.svg') 12 12, grabbing;
-}
-
-.infinite-canvas.is-rotation-angle-315 {
-  cursor: url('../assets/rotate-cursor-315.svg') 12 12, grab;
-}
-
-.infinite-canvas.is-rotation-angle-315.is-rotating {
-  cursor: url('../assets/rotate-cursor-315.svg') 12 12, grabbing;
+.infinite-canvas.is-rotating {
+  cursor: grabbing;
 }
 
 .infinite-canvas.is-curve-ready {
