@@ -43,7 +43,7 @@ export function transformShape(shape: Shape, from: RectangleShape, to: Rectangle
 }
 export function parseScene(value: unknown): Scene {
   if (!value || typeof value !== 'object') throw new Error('Invalid drawing')
-  const scene = value as Scene
+  const scene = JSON.parse(JSON.stringify(value)) as Scene
   if (!Array.isArray(scene.rectangles) || !Array.isArray(scene.lines) || scene.rectangles.length + scene.lines.length > 10000) throw new Error('Invalid drawing')
   const ids = new Set<string>()
   for (const shape of [...scene.rectangles, ...scene.lines]) {
@@ -54,7 +54,10 @@ export function parseScene(value: unknown): Scene {
     const rectangle = shape as RectangleShape
     if (rectangle.label !== undefined && typeof rectangle.label !== 'string') throw new Error('Invalid label')
     if (rectangle.labelFontSize !== undefined && (!Number.isFinite(rectangle.labelFontSize) || rectangle.labelFontSize <= 0)) throw new Error('Invalid label size')
+    if (rectangle.labelFontFamily !== undefined && !(['shantell', 'inter', 'georgia', 'mono'] satisfies TextFontFamily[]).includes(rectangle.labelFontFamily)) throw new Error('Invalid label font')
+    if (rectangle.labelFill !== undefined && typeof rectangle.labelFill !== 'string') throw new Error('Invalid label fill')
     if ('stroke' in shape && shape.stroke !== undefined && shape.stroke !== null && typeof shape.stroke !== 'string') throw new Error('Invalid stroke')
+    if (isLine(shape) && shape.arrowHeadFill !== undefined && typeof shape.arrowHeadFill !== 'string') throw new Error('Invalid arrow head fill')
     if ('fill' in shape && shape.fill !== undefined && typeof shape.fill !== 'string') throw new Error('Invalid fill')
     if ('strokeWidth' in shape && shape.strokeWidth !== undefined && (!Number.isFinite(shape.strokeWidth) || shape.strokeWidth <= 0)) throw new Error('Invalid stroke width')
     if ('strokeStyle' in shape && shape.strokeStyle !== undefined && !['solid', 'dashed', 'dotted'].includes(shape.strokeStyle)) throw new Error('Invalid stroke style')
@@ -73,12 +76,14 @@ export function parseScene(value: unknown): Scene {
     if (isFreeDraw(shape) && (!Array.isArray(shape.points) || shape.points.length > 100000 || !shape.points.flatMap(point => [point.x, point.y]).every(Number.isFinite))) throw new Error('Invalid free draw')
     const text = shape as TextShape
     if (text.kind === 'text') {
+      if ((text as { fontFamily?: unknown }).fontFamily === 'monday') text.fontFamily = 'shantell'
       if (typeof text.text !== 'string' || !Number.isFinite(text.fontSize) || text.fontSize <= 0) throw new Error('Invalid text')
-      if (text.fontFamily !== undefined && !(['inter', 'arial', 'georgia', 'mono'] satisfies TextFontFamily[]).includes(text.fontFamily)) throw new Error('Invalid text font')
+      if (text.fontFamily !== undefined && !(['shantell', 'inter', 'georgia', 'mono'] satisfies TextFontFamily[]).includes(text.fontFamily)) throw new Error('Invalid text font')
+      if (text.backgroundColor !== undefined && typeof text.backgroundColor !== 'string') throw new Error('Invalid text background color')
       if (text.fontWeight !== undefined && !([400, 500, 600, 700] satisfies TextFontWeight[]).includes(text.fontWeight)) throw new Error('Invalid text weight')
       if (text.fontStyle !== undefined && !['normal', 'italic'].includes(text.fontStyle)) throw new Error('Invalid text style')
       if (text.textDecoration !== undefined && !['none', 'underline', 'line-through'].includes(text.textDecoration)) throw new Error('Invalid text decoration')
-      if (text.textAlign !== undefined && !(['left', 'center', 'right'] satisfies TextAlign[]).includes(text.textAlign)) throw new Error('Invalid text alignment')
+      if (text.textAlign !== undefined && !(['left', 'center', 'right', 'justify'] satisfies TextAlign[]).includes(text.textAlign)) throw new Error('Invalid text alignment')
     }
     const image = shape as ImageShape
     if (image.kind === 'image') {
@@ -89,7 +94,7 @@ export function parseScene(value: unknown): Scene {
     if ('link' in shape && shape.link !== undefined && (typeof shape.link !== 'string' || shape.link.length > 2048)) throw new Error('Invalid link')
   }
   if (scene.rectangles.some(isLine) || scene.lines.some(s => !isLine(s))) throw new Error('Invalid shape list')
-  return JSON.parse(JSON.stringify(scene)) as Scene
+  return scene
 }
 
 export function isFreeDraw(shape: Shape): shape is FreeDrawShape { return (shape as { kind?: string }).kind === 'freedraw' }

@@ -2,7 +2,6 @@
 import { defineComponent, h } from 'vue'
 import { Button } from 'frappe-ui'
 import Dropdown from 'frappe-ui/src/components/Dropdown/Dropdown.vue'
-import type { DropdownOptions } from 'frappe-ui/src/components/Dropdown/types'
 import Icon from 'frappe-ui/src/components/Icon/Icon.vue'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
@@ -30,7 +29,7 @@ const LaserPointerIcon = defineComponent(() => () => h('svg', { viewBox: '0 0 20
   h('use', { href: `${laserPointerIcon}#laser-pointer` }),
 ]))
 
-const overflowTools: DropdownOptions = [
+const overflowTools = [
   { label: 'Insert image', icon: ImagePlus, onClick: () => emit('select', 'image') },
   { label: 'Laser pointer', icon: LaserPointerIcon, onClick: () => emit('select', 'laser') },
 ]

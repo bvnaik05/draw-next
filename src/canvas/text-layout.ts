@@ -1,10 +1,10 @@
 import type { TextShape } from './scene'
 
-export const TEXT_FONT_FAMILY = 'InterVar, ui-sans-serif, system-ui, sans-serif'
+export const TEXT_FONT_FAMILY = "'Shantell', cursive"
 export const TEXT_LINE_HEIGHT = 1.25
 export const TEXT_FONT_FAMILIES = {
-  inter: TEXT_FONT_FAMILY,
-  arial: 'Arial, Helvetica, sans-serif',
+  shantell: TEXT_FONT_FAMILY,
+  inter: 'InterVar, ui-sans-serif, system-ui, sans-serif',
   georgia: 'Georgia, serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 } as const
@@ -14,7 +14,7 @@ export type TextLayout = { lines: string[]; width: number; contentWidth: number;
 let context: CanvasRenderingContext2D | undefined
 
 function fontDeclaration(fontSize: number, style: Pick<TextShape, 'fontFamily' | 'fontWeight' | 'fontStyle'> = {}): string {
-  return `${style.fontStyle ?? 'normal'} ${style.fontWeight ?? 400} ${fontSize}px ${TEXT_FONT_FAMILIES[style.fontFamily ?? 'inter']}`
+  return `${style.fontStyle ?? 'normal'} ${style.fontWeight ?? 400} ${fontSize}px ${TEXT_FONT_FAMILIES[style.fontFamily ?? 'shantell']}`
 }
 
 function measure(text: string, fontSize: number, style?: Pick<TextShape, 'fontFamily' | 'fontWeight' | 'fontStyle'>): number {

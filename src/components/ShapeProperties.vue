@@ -45,7 +45,7 @@ function previewOpacity(value: number[]) { emit('preview', { opacity: (value[0] 
       <section>
         <h2>{{ draw ? 'Stroke' : 'Border' }}</h2>
         <div class="swatches" role="group" :aria-label="draw ? 'Stroke color' : 'Border color'">
-          <ShapeColorPicker :color="style.stroke" :label="draw ? 'Custom stroke color' : 'Custom border color'" target="border" @select="selectColor('stroke', $event)" />
+          <ShapeColorPicker :color="style.stroke" :stroke-width="style.strokeWidth" :stroke-style="style.strokeStyle" :show-border-options="true" :label="draw ? 'Custom stroke color' : 'Custom border color'" target="border" @select="selectColor('stroke', $event)" @style="emit('style', $event)" />
           <span class="divider" />
           <Tooltip v-if="!draw" text="None" placement="top"><Button class="swatch none" size="xs" variant="ghost" theme="gray" :class="{ selected: !style.hasStroke }" label="No border" @click="selectColor('stroke', undefined)" /></Tooltip>
           <Tooltip v-for="color in borderColors" :key="color.hex" :text="colorTitle(color)" placement="top">
