@@ -1,4 +1,4 @@
-# Draw Next interaction review
+# Draw interaction review
 
 Open the frontend at http://localhost:8082/draw/. Sign in to Frappe on the same hostname before checking saves.
 
@@ -34,7 +34,7 @@ Use Chrome at 1512 × 862. Repeat the pointer checks with touch and pen where av
 
 Multi-selections with rotated objects or text retain proportions during resize because the document model does not store skew.
 
-The server stores committed documents in the custom Draw Next Drawing DocType. Its definition is in schema/draw-next-drawing.json.
+The current prototype stores committed documents in a temporary drawing DocType defined in schema/draw-next-drawing.json. Phase 1 will move those saves to Draw Diagram.
 
 The frontend requires a Frappe session. Failed saves retain a user-scoped IndexedDB draft and trigger a reload warning.
 

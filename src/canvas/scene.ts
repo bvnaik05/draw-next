@@ -78,6 +78,12 @@ export type FreeDrawShape = RectangleShape & {
   simulatePressure: boolean
 }
 
+export function isClosedFreeDraw(shape: FreeDrawShape): boolean {
+  const first = shape.points[0]
+  const last = shape.points.at(-1)
+  return Boolean(shape.points.length > 2 && first && last && first.x === last.x && first.y === last.y)
+}
+
 export function freeDrawPath(shape: FreeDrawShape): string {
   if (!shape.points.length) return ''
   if (shape.points.length === 1) return `M ${shape.points[0]!.x} ${shape.points[0]!.y} l .01 0`
@@ -87,7 +93,7 @@ export function freeDrawPath(shape: FreeDrawShape): string {
     path += ` Q ${point.x} ${point.y} ${(point.x + next.x) / 2} ${(point.y + next.y) / 2}`
   }
   const last = shape.points.at(-1)!
-  return `${path} L ${last.x} ${last.y}`
+  return isClosedFreeDraw(shape) ? `${path} Z` : `${path} L ${last.x} ${last.y}`
 }
 
 export function rectangleFromPoints(

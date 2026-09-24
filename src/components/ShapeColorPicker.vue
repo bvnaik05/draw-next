@@ -7,7 +7,7 @@ import TextInput from 'frappe-ui/src/components/TextInput/TextInput.vue'
 type Family = { name: string; base: string; shades: string[] }
 type ColorTarget = 'border' | 'fill'
 type PickerMode = 'sidebar' | 'property-object' | 'property-solid'
-type PropertyKind = 'shape' | 'text' | 'arrow' | 'line'
+type PropertyKind = 'shape' | 'text' | 'draw' | 'arrow' | 'line'
 type StrokeStyle = 'solid' | 'dashed' | 'dotted'
 type StylePatch = { strokeWidth?: number; strokeStyle?: StrokeStyle }
 
@@ -56,8 +56,8 @@ const isProperty = computed(() => props.mode !== undefined && props.mode !== 'si
 const isPropertyObject = computed(() => props.mode === 'property-object')
 const showBorderOptions = computed(() => Boolean(props.showBorderOptions))
 const propertyKind = computed(() => props.propertyKind ?? (showBorderOptions.value ? 'shape' : 'text'))
-const primaryLabel = computed(() => ({ shape: 'Fill Color', text: 'Background Color', arrow: 'Arrow Head Color', line: 'Light Colors' })[propertyKind.value])
-const secondaryLabel = computed(() => ({ shape: 'Border Color', text: 'Text Color', arrow: 'Body Color', line: 'Dark Colors' })[propertyKind.value])
+const primaryLabel = computed(() => ({ shape: 'Fill Color', text: 'Background Color', draw: 'Background Color', arrow: 'Arrow Head Color', line: 'Light Colors' })[propertyKind.value])
+const secondaryLabel = computed(() => ({ shape: 'Border Color', text: 'Text Color', draw: 'Pen Color', arrow: 'Body Color', line: 'Dark Colors' })[propertyKind.value])
 const primaryTarget = computed<ColorTarget>(() => propertyKind.value === 'text' ? 'border' : 'fill')
 const secondaryTarget = computed<ColorTarget>(() => propertyKind.value === 'text' ? 'fill' : 'border')
 const primaryPalette = computed(() => propertyKind.value === 'arrow' ? propertyBorderPalette.value : propertyFillPalette.value)

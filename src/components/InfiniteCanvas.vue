@@ -27,6 +27,7 @@ import {
   diamondPath,
   ellipseFromPoints,
   freeDrawPath,
+  isClosedFreeDraw,
   lineFromPoints,
   lineControlPoint,
   lineArrowHeadPath,
@@ -65,8 +66,6 @@ import type { DrawingTool } from '../canvas/tools'
 import { layoutText, TEXT_FONT_FAMILIES, TEXT_LINE_HEIGHT } from '../canvas/text-layout'
 import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
-import ShapeProperties from './ShapeProperties.vue'
-import TextProperties from './TextProperties.vue'
 import rotateCursorSvg from '../assets/rotate-cursor-white.svg?raw'
 import ShapeColorPicker from './ShapeColorPicker.vue'
 
@@ -141,8 +140,7 @@ const pendingLine = ref<LineShape>()
 const pendingText = ref<RectangleShape>()
 const pendingDraw = ref<FreeDrawShape>()
 const erasedShapeIds = ref<string[]>([])
-const drawStyle = reactive({ stroke: '#171717', strokeWidth: 3, strokeStyle: 'solid' as const, opacity: 1, variable: false })
-const drawPropertiesShape = computed<RectangleShape[]>(() => [{ id: 'draw-style', x: 0, y: 0, width: 0, height: 0, rotation: 0, cornerRadius: 0, ...drawStyle }])
+const drawStyle = reactive({ stroke: '#171717' as string | null, fill: 'none', strokeWidth: 3, strokeStyle: 'solid' as const, opacity: 1 })
 const croppingImageId = ref<string>()
 const cropFrame = ref<RectangleShape>()
 const textEditor = ref<TextEditor>()
@@ -183,22 +181,25 @@ const armedTextStyle = reactive<Pick<TextShape, 'fill' | 'backgroundColor' | 'fo
 const allShapes = computed(() => [...lines.value, ...rectangles.value].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)))
 const selectedShapes = computed(() => allShapes.value.filter(s => selectedShapeIds.value.includes(s.id)))
 const selectedTextShapes = computed(() => selectedShapes.value.every(isText) ? selectedShapes.value as TextShape[] : [])
-const textPropertyControlsEnabled = computed(() => Boolean(textEditor.value?.kind === 'text') || props.activeTool === 'text' || selectedTextShapes.value.length > 0)
-const usesSolidColorPalette = computed(() => selectedShapes.value.some(shape => isLine(shape) || isText(shape)) || (!selectedShapes.value.length && textPropertyControlsEnabled.value))
-const propertyColorKind = computed<'shape' | 'text' | 'arrow' | 'line'>(() => {
+const textPropertyControlsEnabled = computed(() => props.activeTool !== 'draw' && (Boolean(textEditor.value?.kind === 'text') || props.activeTool === 'text' || selectedTextShapes.value.length > 0))
+const usesSolidColorPalette = computed(() => props.activeTool !== 'draw' && (selectedShapes.value.some(shape => isLine(shape) || isText(shape)) || (!selectedShapes.value.length && textPropertyControlsEnabled.value)))
+const propertyColorKind = computed<'shape' | 'text' | 'draw' | 'arrow' | 'line'>(() => {
+  if (props.activeTool === 'draw') return 'draw'
   const shape = selectedShapes.value.at(-1)
   if (!shape || isText(shape)) return 'text'
   if (isLine(shape)) return shape.kind
   return 'shape'
 })
-const propertyColorTarget = computed<'border' | 'fill'>(() => selectedShapes.value.some(isLine) ? 'border' : 'fill')
+const propertyColorTarget = computed<'border' | 'fill'>(() => props.activeTool === 'draw' ? 'fill' : selectedShapes.value.some(isLine) ? 'border' : 'fill')
 const activePropertyColor = computed(() => {
+  if (props.activeTool === 'draw') return drawStyle.fill === 'none' ? '#171717' : drawStyle.fill
   const shape = selectedShapes.value.at(-1)
   return shape
     ? (isLine(shape) ? (shape.kind === 'arrow' ? shape.arrowHeadFill ?? shape.stroke : shape.stroke) ?? '#171717' : shape.fill ?? '#e6f4ff')
     : textEditor.value?.fill ?? armedTextStyle.fill
 })
 const activePropertyBorderColor = computed(() => {
+  if (props.activeTool === 'draw') return drawStyle.stroke ?? '#171717'
   const text = selectedTextShapes.value.at(-1)
   if (text) return text.backgroundColor
   if (textEditor.value?.kind === 'text') return textEditor.value.backgroundColor
@@ -207,7 +208,7 @@ const activePropertyBorderColor = computed(() => {
 })
 const activePropertyStrokeWidth = computed(() => selectedShapes.value.at(-1)?.strokeWidth ?? 2)
 const activePropertyStrokeStyle = computed(() => selectedShapes.value.at(-1)?.strokeStyle ?? 'solid')
-const propertyToolbarVisible = computed(() => Boolean(selectedShapes.value.length || textPropertyControlsEnabled.value))
+const propertyToolbarVisible = computed(() => props.activeTool !== 'eraser' && Boolean(props.activeTool === 'draw' || selectedShapes.value.length || textPropertyControlsEnabled.value))
 const propertyTextStyle = computed(() => {
   const editor = textEditor.value
   const text = selectedTextShapes.value.at(-1)
@@ -835,12 +836,12 @@ function onClipboard(event: ClipboardEvent) {
     }
     try {
       const data = JSON.parse(event.clipboardData?.getData('text/plain') ?? '')
-      if (data.format !== 'draw-next') return
+      if (data.format !== 'draw') return
       insertScene(parseScene(data.scene))
       event.preventDefault()
-    } catch { liveMessage.value = 'Clipboard does not contain a valid Draw Next drawing.' }
+    } catch { liveMessage.value = 'Clipboard does not contain a valid Draw drawing.' }
   } else if (copySelectedShape()) {
-    event.clipboardData?.setData('text/plain', JSON.stringify({ format: 'draw-next', scene: clipboard }))
+    event.clipboardData?.setData('text/plain', JSON.stringify({ format: 'draw', scene: clipboard }))
     event.preventDefault()
     if (event.type === 'cut' && event.clipboardData) deleteSelectedShape()
   }
@@ -881,7 +882,11 @@ function moveSelectedShape(x: number, y: number): boolean {
 function moveSelectedShapes(scene: SceneSnapshot, delta: Point) {
   rectangles.value = rectangles.value.map((shape) => {
     const original = scene.rectangles.find((candidate) => candidate.id === shape.id)
-    return original && selectedShapeIds.value.includes(shape.id) ? moveRectangle(original, delta) : shape
+    if (!original || !selectedShapeIds.value.includes(shape.id)) return shape
+    const moved = moveRectangle(original, delta)
+    return isFreeDraw(original)
+      ? { ...original, ...moved, points: original.points.map(point => ({ x: point.x + delta.x, y: point.y + delta.y })) }
+      : moved
   })
   lines.value = lines.value.map((shape) => {
     const original = scene.lines.find((candidate) => candidate.id === shape.id)
@@ -1566,7 +1571,7 @@ function replaceLine(next: LineShape) {
 function shapeStyle(shape: Shape) {
   return {
     stroke: shape.stroke === null ? 'none' : shape.stroke ?? '#171717',
-    fill: isLine(shape) || isImage(shape) || isFreeDraw(shape) ? 'none' : shape.fill ?? 'none',
+    fill: isLine(shape) || isImage(shape) || (isFreeDraw(shape) && !isClosedFreeDraw(shape)) ? 'none' : shape.fill ?? 'none',
     strokeWidth: `${shape.strokeWidth ?? 2}px`,
     strokeDasharray: shape.strokeStyle === 'dashed' ? '8 5' : shape.strokeStyle === 'dotted' ? '1 5' : undefined,
     strokeLinecap: shape.strokeStyle === 'dotted' ? 'round' as const : undefined,
@@ -1604,6 +1609,10 @@ function updateSelectedTextStyle(patch: TextStylePatch) {
 }
 
 function applyObjectColor(color: ObjectColor) {
+  if (props.activeTool === 'draw') {
+    Object.assign(drawStyle, { stroke: color.border, fill: color.fill })
+    return
+  }
   const selected = new Set(selectedShapeIds.value)
   rectangles.value = rectangles.value.map(shape => selected.has(shape.id) ? { ...shape, stroke: color.border, fill: color.fill } : shape)
   lines.value = lines.value.map(shape => selected.has(shape.id) ? { ...shape, stroke: color.border } : shape)
@@ -1630,6 +1639,11 @@ function applySolidColor(color: string) {
 }
 
 function applyCustomPropertyColor(color: string | undefined, target?: 'border' | 'fill') {
+  if (props.activeTool === 'draw') {
+    if (target === 'border') drawStyle.stroke = color ?? null
+    else drawStyle.fill = color ?? 'none'
+    return
+  }
   if (textPropertyControlsEnabled.value) {
     return updatePropertyTextStyle(target === 'border' ? { backgroundColor: color } : { fill: color })
   }
@@ -1970,17 +1984,13 @@ function shapeFromPoints(start: Point, end: Point, id: string, constrainProporti
   return rectangleFromPoints(start, end, id, constrainProportions)
 }
 
-function updateDrawStyle(patch: { stroke?: string | null; strokeWidth?: number; strokeStyle?: 'solid' | 'dashed' | 'dotted'; opacity?: number }) {
-  if (patch.stroke !== null) Object.assign(drawStyle, patch)
-}
-
 function beginDraw(event: PointerEvent, point: Point) {
   const world = screenToWorld(point, latestViewport())
   drawPointerId = event.pointerId
   pendingDraw.value = {
     id: 'pending-draw', kind: 'freedraw', points: [world], pressures: [event.pressure],
-    simulatePressure: !drawStyle.variable, x: world.x, y: world.y, width: 0, height: 0,
-    rotation: 0, cornerRadius: 0, stroke: drawStyle.stroke, strokeWidth: drawStyle.strokeWidth,
+    simulatePressure: true, x: world.x, y: world.y, width: 0, height: 0,
+    rotation: 0, cornerRadius: 0, stroke: drawStyle.stroke, fill: drawStyle.fill, strokeWidth: drawStyle.strokeWidth,
     strokeStyle: drawStyle.strokeStyle, opacity: drawStyle.opacity,
   }
   root.value?.setPointerCapture(event.pointerId)
@@ -1996,6 +2006,12 @@ function updateDraw(event: PointerEvent) {
     if (distance(point, shape.points.at(-1)!) * viewport.scale < 1) continue
     shape.points.push(point)
     shape.pressures.push(sample.pressure)
+  }
+  const first = shape.points[0]!
+  const last = shape.points.at(-1)!
+  // ponytail: fixed 12px closure snap; make tolerance configurable if user testing needs it.
+  if (shape.points.length > 2 && distance(first, last) * viewport.scale <= 12) {
+    shape.points[shape.points.length - 1] = { ...first }
   }
   const xs = shape.points.map(point => point.x), ys = shape.points.map(point => point.y)
   Object.assign(shape, { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) })
@@ -3073,10 +3089,6 @@ onBeforeUnmount(() => {
       @keydown="onTextEditorKeyDown"
     />
 
-    <ShapeProperties v-if="activeTool === 'draw'" draw :variable="drawStyle.variable" :shapes="drawPropertiesShape" :layer-actions="layerActions" @preview="updateDrawStyle" @style="updateDrawStyle" @pressure="drawStyle.variable = $event" />
-    <TextProperties v-else-if="selectedTextShapes.length" :texts="selectedTextShapes" :layer-actions="layerActions" @preview="previewSelectedTextStyle" @style="updateSelectedTextStyle" @layer="reorderSelectedShapes" />
-    <ShapeProperties v-else :shapes="selectedShapes" :layer-actions="layerActions" @preview="previewSelectedStyle" @style="updateSelectedStyle" @layer="reorderSelectedShapes" />
-
     <div v-if="propertyToolbarVisible" class="property-toolbar" role="toolbar" aria-label="Property bar" @pointerdown.capture="beginPropertyToolbarInteraction" @pointerdown.stop @click.capture="endPropertyToolbarInteraction" @dblclick.stop>
       <div class="property-color-group">
         <ShapeColorPicker
@@ -3084,7 +3096,7 @@ onBeforeUnmount(() => {
             :secondary-color="activePropertyBorderColor"
             :stroke-width="activePropertyStrokeWidth"
             :stroke-style="activePropertyStrokeStyle"
-            :show-border-options="Boolean(selectedShapes.length && !selectedTextShapes.length)"
+            :show-border-options="props.activeTool !== 'draw' && Boolean(selectedShapes.length && !selectedTextShapes.length)"
             :target="propertyColorTarget"
             mode="property-object"
             :property-kind="propertyColorKind"
@@ -3118,8 +3130,8 @@ onBeforeUnmount(() => {
             theme="gray"
             :label="`${color.label} fill and border`"
             :title="`${color.label} fill and border`"
-            :aria-pressed="activePropertyColor === color.fill"
-            :class="{ selected: activePropertyColor === color.fill }"
+            :aria-pressed="props.activeTool === 'draw' ? drawStyle.stroke === color.border && drawStyle.fill === color.fill : activePropertyColor === color.fill"
+            :class="{ selected: props.activeTool === 'draw' ? drawStyle.stroke === color.border && drawStyle.fill === color.fill : activePropertyColor === color.fill }"
             :style="{ '--property-fill': color.fill, '--property-border': color.border }"
             @click="applyObjectColor(color)"
           />
