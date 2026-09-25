@@ -6,7 +6,7 @@ import Icon from 'frappe-ui/src/components/Icon/Icon.vue'
 import Select from 'frappe-ui/src/components/Select/Select.vue'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
-import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, ChevronDown, ChevronUp, Italic, Redo2, Underline, Undo2, ZoomIn, ZoomOut } from 'lucide-vue-next'
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Italic, Minus, Plus, Redo2, Underline, Undo2 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   MAX_SCALE,
@@ -68,6 +68,7 @@ import SnapGuides from './SnapGuides.vue'
 import LaserTrail from './LaserTrail.vue'
 import rotateCursorSvg from '../assets/rotate-cursor-white.svg?raw'
 import ShapeColorPicker from './ShapeColorPicker.vue'
+import CanvasMinimap from './CanvasMinimap.vue'
 
 type PointerSample = Point & { pointerType: string }
 type TextStylePatch = Partial<Pick<TextShape, 'fill' | 'backgroundColor' | 'fontFamily' | 'fontWeight' | 'fontStyle' | 'textDecoration' | 'textAlign' | 'opacity' | 'fontSize'>>
@@ -124,6 +125,7 @@ let cycleClickPoint: Point | undefined
 let cycleClickShape: Shape | undefined
 const size = reactive<Point>({ x: 0, y: 0 })
 const viewport = reactive<Viewport>({ translationX: 0, translationY: 0, scale: 1 })
+const minimapOpen = ref(false)
 const pointers = new Map<number, PointerSample>()
 const isPanning = ref(false)
 const isSpacePressed = ref(false)
@@ -535,6 +537,15 @@ function stepZoom(direction: -1 | 1) {
 
 function resetZoom() {
   setZoom(1)
+}
+
+function panToMinimapPoint(point: Point) {
+  const current = latestViewport()
+  queueViewport({
+    ...current,
+    translationX: size.x / 2 - point.x * current.scale,
+    translationY: size.y / 2 - point.y * current.scale,
+  })
 }
 
 function copyScene(scene: SceneSnapshot = { rectangles: rectangles.value, lines: lines.value }): SceneSnapshot {
@@ -3172,7 +3183,8 @@ onBeforeUnmount(() => {
         <Redo2 class="history-control-icon" aria-hidden="true" />
       </Button>
     </div>
-    <div class="viewport-controls" role="group" aria-label="Canvas zoom controls">
+    <div class="viewport-panel" :class="{ 'is-open': minimapOpen }" @pointerdown.stop @pointermove.stop @pointerup.stop @pointercancel.stop @dblclick.stop>
+    <div class="viewport-controls" role="group" aria-label="Canvas zoom and minimap controls">
             <TooltipProvider>
               <Tooltip text="Zoom out" placement="top">
                 <Button
@@ -3183,11 +3195,12 @@ onBeforeUnmount(() => {
                   :disabled="viewport.scale <= MIN_SCALE"
                   @click="stepZoom(-1)"
                 >
-                  <ZoomOut class="viewport-control-icon" aria-hidden="true" />
+                  <Minus class="viewport-control-icon" aria-hidden="true" />
                 </Button>
               </Tooltip>
               <Tooltip text="Reset zoom to 100%" placement="top">
                 <Button
+                  class="zoom-reset"
                   size="md"
                   variant="ghost"
                   theme="gray"
@@ -3206,10 +3219,29 @@ onBeforeUnmount(() => {
                   :disabled="viewport.scale >= MAX_SCALE"
                   @click="stepZoom(1)"
                 >
-                  <ZoomIn class="viewport-control-icon" aria-hidden="true" />
+                  <Plus class="viewport-control-icon" aria-hidden="true" />
+                </Button>
+              </Tooltip>
+              <Tooltip :text="minimapOpen ? 'Hide minimap' : 'Toggle minimap'" placement="top">
+                <Button
+                  class="minimap-toggle"
+                  size="md"
+                  variant="ghost"
+                  theme="gray"
+                  :label="minimapOpen ? 'Hide minimap' : 'Toggle minimap'"
+                  :aria-expanded="minimapOpen"
+                  aria-controls="canvas-minimap"
+                  @click="minimapOpen = !minimapOpen"
+                >
+                  <ChevronLeft v-if="minimapOpen" class="viewport-control-icon" aria-hidden="true" />
+                  <ChevronRight v-else class="viewport-control-icon" aria-hidden="true" />
                 </Button>
               </Tooltip>
             </TooltipProvider>
+    </div>
+    <div v-if="minimapOpen" id="canvas-minimap" class="minimap-view">
+      <CanvasMinimap :shapes="allShapes" :viewport="viewport" :canvas-size="size" @pan-to="panToMinimapPoint" />
+    </div>
     </div>
 
     <p v-if="liveMessage.startsWith('Clipboard')" class="command-feedback">{{ liveMessage }}</p>
@@ -3223,14 +3255,14 @@ onBeforeUnmount(() => {
   position: fixed;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   right: auto;
   bottom: 16px;
   left: 50%;
   z-index: 1;
   width: max-content;
   max-width: calc(100vw - 32px);
-  min-height: 40px;
+  height: 36px;
   padding: 3px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -3244,18 +3276,18 @@ onBeforeUnmount(() => {
 }
 .property-toolbar::-webkit-scrollbar { display: none; }
 .property-toolbar :deep(button) { pointer-events: auto; }
-.property-color-group { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.property-color { width: 32px !important; height: 32px !important; padding: 0 6px; border-radius: 6px !important; }
+.property-color-group { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.property-color { width: 28px !important; height: 28px !important; padding: 0 6px; border-radius: 6px !important; }
 .property-color :deep(.truncate) { display: none; }
 .property-color--object { border: 2px solid var(--property-border) !important; background: var(--property-fill) !important; }
 .property-color--solid { background: var(--property-color) !important; }
-.property-toolbar :deep(.property-tool) { width: 32px; min-width: 32px; height: 32px; padding: 0; border-radius: 6px; }
-.property-toolbar :deep(.property-tool-icon) { width: 14px; height: 14px; flex: 0 0 auto; }
+.property-toolbar :deep(.property-tool) { width: 28px; min-width: 28px; height: 28px; padding: 0; border-radius: 6px; }
+.property-toolbar :deep(.property-tool-icon) { width: 16px; height: 16px; flex: 0 0 auto; }
 .property-toolbar :deep(.property-tool.is-active) { color: var(--ink-gray-8); background: var(--surface-gray-3); }
 .property-toolbar :deep(.property-text-control) { flex: 0 0 auto; min-width: 0; }
 .property-toolbar :deep(.property-text-control--font) { width: 124px; }
 .property-toolbar :deep(.property-text-control--size) { width: 64px; }
-.property-text-control :deep(button) { min-height: 32px; padding: 0 8px; }
+.property-text-control :deep(button) { height: 28px; min-height: 28px; padding: 0 8px; }
 :global(body:has(.property-text-control--font[data-state='open']):not(:has(.property-text-control--size[data-state='open'])) > div:has(> [data-slot='content']):not(:has(~ div [data-slot='content']))),
 :global(body:has(.property-text-control--font[data-state='open']):has(.property-text-control--size[data-state='open']) > div:has(> [data-slot='content']):has(~ div [data-slot='content'])) { width: 124px !important; min-width: 0 !important; }
 :global(body:has(.property-text-control--font[data-state='open']):not(:has(.property-text-control--size[data-state='open'])) > div:has(> [data-slot='content']):not(:has(~ div [data-slot='content'])) [data-slot='content']),
@@ -3281,7 +3313,8 @@ onBeforeUnmount(() => {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 5px;
+  height: 36px;
   padding: 3px;
   border: 1px solid var(--outline-gray-1);
   border-radius: 10px;
@@ -3289,9 +3322,17 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-sm);
 }
 
+.history-controls :deep(button) {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+
 .history-control-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   stroke-width: 1.5;
 }
 
@@ -3551,19 +3592,40 @@ onBeforeUnmount(() => {
   fill-opacity: 0.55;
 }
 
-.viewport-controls {
+.viewport-panel {
   position: fixed;
   left: 16px;
   bottom: 16px;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
   border: 1px solid var(--outline-gray-1);
   border-radius: 10px;
   background: var(--surface-base);
   box-shadow: var(--shadow-sm);
+}
+.viewport-panel.is-open {
+  width: 168px;
+  overflow: hidden;
+}
+.viewport-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  height: 36px;
+  padding: 3px;
+}
+.minimap-view { display: flex; justify-content: center; padding: 0 11px 11px; }
+
+.viewport-controls :deep(button) {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.viewport-controls :deep(.zoom-reset) {
+  width: 56px;
 }
 
 .zoom-label {
@@ -3577,17 +3639,37 @@ onBeforeUnmount(() => {
 }
 
 .viewport-control-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   stroke-width: 1.5;
 }
 
 @media (pointer: coarse) {
-  .property-color,
+  .viewport-panel.is-open { width: 224px; }
+  .property-toolbar,
+  .history-controls,
+  .viewport-controls {
+    height: 52px;
+  }
+
+  .property-toolbar :deep(.property-color),
+  .property-toolbar :deep(.property-tool),
+  .property-toolbar :deep(.color-trigger--property),
   .history-controls :deep(button),
   .viewport-controls :deep(button) {
+    width: 44px !important;
     min-width: 44px;
+    height: 44px !important;
     min-height: 44px;
+  }
+
+  .property-text-control :deep(button) {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .viewport-controls :deep(.zoom-reset) {
+    width: 56px !important;
   }
 }
 

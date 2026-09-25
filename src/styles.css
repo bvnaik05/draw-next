@@ -112,6 +112,11 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
+.draw-home :focus:not(:focus-visible),
+.app-shell :focus:not(:focus-visible) {
+  outline: none;
+}
+
 /* Keep SVG text measurement and the editing control on the same native layout. */
 .canvas-text-input {
   display: block;

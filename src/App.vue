@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { drawingTitle } from './canvas/persistence'
+import { drawingTitle, flushDrawing } from './canvas/persistence'
 import TextInput from 'frappe-ui/src/components/TextInput/TextInput.vue'
+import FrappeUIProvider from 'frappe-ui/src/components/Provider/FrappeUIProvider.vue'
+import { onBeforeRouteLeave, RouterLink } from 'vue-router'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import drawLogo from './assets/draw-logo.svg'
 import type { DrawingTool } from './canvas/tools'
@@ -30,6 +32,8 @@ function finishRenaming() {
   nextTick(() => document.querySelector<HTMLElement>('.infinite-canvas')?.focus())
 }
 function cancelRenaming() { titleDraft.value = title.value; finishRenaming() }
+
+onBeforeRouteLeave(flushDrawing)
 
 function selectTool(tool: DrawingTool) {
   if (tool === 'eraser' && activeTool.value !== 'eraser') lastTool = activeTool.value ?? 'select'
@@ -108,9 +112,10 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="app-shell">
+    <FrappeUIProvider />
     <header class="drawing-header" aria-label="Drawing header">
       <div class="header-side header-left">
-        <img class="draw-logo" :src="drawLogo" alt="Draw" width="24" height="24" />
+        <RouterLink to="/"><img class="draw-logo" :src="drawLogo" alt="Draw" width="24" height="24" /></RouterLink>
       </div>
       <h1 class="drawing-title">
         <TextInput

@@ -3,7 +3,7 @@
   "name": "Draw Next Drawing",
   "module": "Custom",
   "custom": 1,
-  "autoname": "prompt",
+  "autoname": "hash",
   "title_field": "title",
   "track_changes": 1,
   "fields": [
