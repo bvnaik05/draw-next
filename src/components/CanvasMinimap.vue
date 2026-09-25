@@ -63,11 +63,11 @@ function isText(shape: Shape): shape is TextShape {
 }
 
 function isDiamond(shape: Shape): boolean {
-  return 'kind' in shape && shape.kind === 'diamond'
+  return 'kind' in shape && (shape.kind as string) === 'diamond'
 }
 
 function isEllipse(shape: Shape): boolean {
-  return 'kind' in shape && shape.kind === 'ellipse'
+  return 'kind' in shape && (shape.kind as string) === 'ellipse'
 }
 
 function rotation(shape: RectangleShape): string {
