@@ -183,7 +183,7 @@ async function pickScreenColor() {
 <style scoped>
 .color-trigger-anchor { display: contents; }
 .color-trigger-anchor :deep(.color-trigger) { width: 26px !important; height: 26px !important; padding: 0; border-radius: 5px !important; background: var(--color) !important; }
-.color-trigger-anchor :deep(.color-trigger--property) { width: 32px !important; height: 32px !important; padding: 0 6px; border-radius: 6px !important; background: conic-gradient(from 45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #a855f7, #ef4444) !important; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%); }
+.color-trigger-anchor :deep(.color-trigger--property) { width: 28px !important; height: 28px !important; padding: 0 6px; border-radius: 6px !important; background: conic-gradient(from 45deg, #ef4444, #f59e0b, #10b981, #3b82f6, #a855f7, #ef4444) !important; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%); }
 .color-trigger-anchor :deep(.color-trigger .truncate) { display: none; }
 .color-picker { width: 264px; padding: 18px; color: var(--ink-gray-7); }
 .color-picker--property { width: 198px; padding: 14px; }

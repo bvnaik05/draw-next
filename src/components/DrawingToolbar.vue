@@ -55,14 +55,12 @@ const overflowTools = [
             <Icon v-if="tool.icon" :name="tool.icon" :class="tool.value === 'diamond' ? 'size-4' : 'size-3.5'" :stroke-width="tool.value === 'diamond' ? 1.25 : 1.5" />
           </Button>
         </Tooltip>
-        <span class="drawing-toolbar__separator" aria-hidden="true" />
         <Dropdown
           class="drawing-tool"
           align="end"
           :offset="12"
           :options="overflowTools"
-          :button="{ icon: 'lucide-more-horizontal', label: 'More tools' }"
-          :class="{ 'is-active': activeTool === 'image' || activeTool === 'laser' }"
+          :button="{ icon: 'lucide-more-horizontal', label: 'More tools', size: 'md', variant: 'ghost', theme: 'gray' }"
         />
       </div>
     </TooltipProvider>
@@ -85,8 +83,8 @@ const overflowTools = [
 .drawing-toolbar__surface {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 40px;
+  gap: 5px;
+  height: 36px;
   padding: 3px;
   border: 1px solid var(--outline-gray-1);
   border-radius: 10px;
@@ -96,7 +94,18 @@ const overflowTools = [
 }
 
 .drawing-toolbar__surface :deep(button) {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
   pointer-events: auto;
+}
+
+.drawing-toolbar__surface :deep(button svg),
+.drawing-toolbar__surface :deep(button [class*='lucide-']) {
+  width: 16px;
+  height: 16px;
 }
 
 .drawing-tool.is-active {
@@ -104,17 +113,15 @@ const overflowTools = [
   background: var(--surface-gray-3);
 }
 
-.drawing-toolbar__separator {
-  width: 1px;
-  height: 16px;
-  flex: 0 0 auto;
-  background: var(--outline-gray-1);
-}
-
 @media (pointer: coarse) {
-  .drawing-tool {
+  .drawing-toolbar__surface {
+    height: 52px;
+  }
+
+  .drawing-toolbar__surface :deep(button) {
+    width: 44px;
     min-width: 44px;
-    min-height: 44px;
+    height: 44px;
   }
 }
 </style>

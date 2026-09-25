@@ -7,6 +7,10 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: [
       {
+        find: '~icons/lucide/chevron-down',
+        replacement: new URL('./src/assets/lucide-chevron-down.ts', import.meta.url).pathname,
+      },
+      {
         find: 'frappe-ui/src',
         replacement: new URL(
           './node_modules/frappe-ui/src',
@@ -34,12 +38,12 @@ export default defineConfig(({ mode }) => ({
       usePolling: true,
     },
     proxy: {
-      '/desk': 'http://draw.local:8001',
-      '/app': 'http://draw.local:8001',
-      '/login': 'http://draw.local:8001',
-      '/api': 'http://draw.local:8001',
-      '/assets': 'http://draw.local:8001',
-      '/files': 'http://draw.local:8001',
+      '/desk': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
+      '/app': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
+      '/login': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
+      '/api': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
+      '/assets': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
+      '/files': { target: 'http://127.0.0.1:8001', headers: { Host: 'draw.local' } },
     },
   },
   test: {
