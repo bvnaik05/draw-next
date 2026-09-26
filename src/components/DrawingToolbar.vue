@@ -2,7 +2,6 @@
 import { defineComponent, h } from 'vue'
 import { Button } from 'frappe-ui'
 import Dropdown from 'frappe-ui/src/components/Dropdown/Dropdown.vue'
-import Icon from 'frappe-ui/src/components/Icon/Icon.vue'
 import Tooltip from 'frappe-ui/src/components/Tooltip/Tooltip.vue'
 import TooltipProvider from 'frappe-ui/src/components/Tooltip/TooltipProvider.vue'
 import { ArrowRight, Circle, Diamond, Eraser, ImagePlus, Minus, MousePointer2, Pencil, Square, Type } from 'lucide-vue-next'
@@ -48,12 +47,11 @@ const overflowTools = [
             :label="tool.label"
             :aria-label="tool.label"
             :class="{ 'is-active': activeTool === tool.value }"
+            :icon="tool.icon"
             :aria-pressed="activeTool === tool.value"
             :aria-keyshortcuts="tool.shortcut"
             @click="emit('select', tool.value)"
-          >
-            <Icon v-if="tool.icon" :name="tool.icon" :class="tool.value === 'diamond' ? 'size-4' : 'size-3.5'" :stroke-width="tool.value === 'diamond' ? 1.25 : 1.5" />
-          </Button>
+          />
         </Tooltip>
         <Dropdown
           class="drawing-tool"
@@ -106,6 +104,10 @@ const overflowTools = [
 .drawing-toolbar__surface :deep(button [class*='lucide-']) {
   width: 16px;
   height: 16px;
+}
+
+.drawing-toolbar__surface :deep(button.drawing-tool svg) {
+  stroke-width: 1.5;
 }
 
 .drawing-tool.is-active {

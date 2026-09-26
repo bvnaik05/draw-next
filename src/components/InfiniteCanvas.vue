@@ -150,6 +150,7 @@ const propertyToolbarInteracting = ref(false)
 const textArea = ref<HTMLTextAreaElement>()
 const selectedRectangleId = ref<string>()
 const selectedLineId = ref<string>()
+const selectedLabelId = ref<string>()
 const selectedShapeIds = ref<string[]>([])
 const multiSelectionFrame = ref<RectangleShape>()
 const hoveredSelectionHandle = ref<SelectionHandle>()
@@ -183,12 +184,17 @@ const armedTextStyle = reactive<Pick<TextShape, 'fill' | 'backgroundColor' | 'fo
 const allShapes = computed(() => [...lines.value, ...rectangles.value].sort((a,b) => (a.order ?? 0) - (b.order ?? 0)))
 const selectedShapes = computed(() => allShapes.value.filter(s => selectedShapeIds.value.includes(s.id)))
 const selectedTextShapes = computed(() => selectedShapes.value.every(isText) ? selectedShapes.value as TextShape[] : [])
-const textPropertyControlsEnabled = computed(() => props.activeTool !== 'draw' && (Boolean(textEditor.value?.kind === 'text') || props.activeTool === 'text' || selectedTextShapes.value.length > 0))
-const usesSolidColorPalette = computed(() => props.activeTool !== 'draw' && (selectedShapes.value.some(shape => isLine(shape) || isText(shape)) || (!selectedShapes.value.length && textPropertyControlsEnabled.value)))
+const selectedLabel = computed(() => {
+  if (selectedShapeIds.value.length !== 1 || selectedLabelId.value !== selectedShapeIds.value[0]) return undefined
+  const shape = rectangles.value.find(shape => shape.id === selectedLabelId.value)
+  return shape && !isText(shape) && !isImage(shape) && !isFreeDraw(shape) && shape.label ? shape : undefined
+})
+const textPropertyControlsEnabled = computed(() => props.activeTool !== 'draw' && (Boolean(textEditor.value) || selectedTextShapes.value.length > 0 || Boolean(selectedLabel.value) || (!selectedShapes.value.length && props.activeTool === 'text')))
+const usesSolidColorPalette = computed(() => props.activeTool !== 'draw' && (selectedShapes.value.some(shape => isLine(shape) || isText(shape)) || Boolean(selectedLabel.value) || (!selectedShapes.value.length && textPropertyControlsEnabled.value)))
 const propertyColorKind = computed<'shape' | 'text' | 'draw' | 'arrow' | 'line'>(() => {
   if (props.activeTool === 'draw') return 'draw'
   const shape = selectedShapes.value.at(-1)
-  if (!shape || isText(shape)) return 'text'
+  if (!shape || isText(shape) || shape === selectedLabel.value) return 'text'
   if (isLine(shape)) return shape.kind
   return 'shape'
 })
@@ -197,7 +203,7 @@ const activePropertyColor = computed(() => {
   if (props.activeTool === 'draw') return drawStyle.fill === 'none' ? '#171717' : drawStyle.fill
   const shape = selectedShapes.value.at(-1)
   return shape
-    ? (isLine(shape) ? (shape.kind === 'arrow' ? shape.arrowHeadFill ?? shape.stroke : shape.stroke) ?? '#171717' : shape.fill ?? '#e6f4ff')
+    ? (isLine(shape) ? (shape.kind === 'arrow' ? shape.arrowHeadFill ?? shape.stroke : shape.stroke) ?? '#171717' : shape === selectedLabel.value ? shape.labelFill ?? '#171717' : shape.fill ?? '#e6f4ff')
     : textEditor.value?.fill ?? armedTextStyle.fill
 })
 const activePropertyBorderColor = computed(() => {
@@ -215,12 +221,12 @@ const propertyTextStyle = computed(() => {
   const editor = textEditor.value
   const text = selectedTextShapes.value.at(-1)
   return {
-    fontFamily: editor?.fontFamily ?? text?.fontFamily ?? armedTextStyle.fontFamily ?? 'shantell',
-    fontSize: editor?.fontSize ?? text?.fontSize ?? armedTextStyle.fontSize ?? 16,
-    fontWeight: editor?.fontWeight ?? text?.fontWeight ?? armedTextStyle.fontWeight ?? 400,
-    fontStyle: editor?.fontStyle ?? text?.fontStyle ?? armedTextStyle.fontStyle ?? 'normal',
-    textDecoration: editor?.textDecoration ?? text?.textDecoration ?? armedTextStyle.textDecoration ?? 'none',
-    textAlign: editor?.textAlign ?? text?.textAlign ?? armedTextStyle.textAlign ?? 'left',
+    fontFamily: editor?.fontFamily ?? text?.fontFamily ?? selectedLabel.value?.labelFontFamily ?? armedTextStyle.fontFamily ?? 'shantell',
+    fontSize: editor?.fontSize ?? text?.fontSize ?? selectedLabel.value?.labelFontSize ?? armedTextStyle.fontSize ?? 16,
+    fontWeight: editor?.fontWeight ?? text?.fontWeight ?? selectedLabel.value?.labelFontWeight ?? armedTextStyle.fontWeight ?? 400,
+    fontStyle: editor?.fontStyle ?? text?.fontStyle ?? selectedLabel.value?.labelFontStyle ?? armedTextStyle.fontStyle ?? 'normal',
+    textDecoration: editor?.textDecoration ?? text?.textDecoration ?? selectedLabel.value?.labelTextDecoration ?? armedTextStyle.textDecoration ?? 'none',
+    textAlign: editor?.textAlign ?? text?.textAlign ?? selectedLabel.value?.labelTextAlign ?? armedTextStyle.textAlign ?? 'center',
   }
 })
 const propertyTextAlignOption = computed(() => textAlignOptions.find(option => option.value === propertyTextStyle.value.textAlign) ?? textAlignOptions[0]!)
@@ -294,6 +300,7 @@ let selectionGesture:
       original: RectangleShape
       initial: RectangleShape
       originalScene: SceneSnapshot
+      labelOriginal?: RectangleShape
       rollbackScene?: SceneSnapshot
       handle?: ResizeHandle | Corner
       handleStart?: Point
@@ -368,6 +375,7 @@ const canRedo = computed(() => {
 })
 const selectionFrame = computed<RectangleShape | undefined>(() => {
   if (hasMultipleSelection.value && multiSelectionFrame.value) return multiSelectionFrame.value
+  if (selectedLabel.value) return selectionOutline(labelSelectionBounds(selectedLabel.value))
   const rectangle = hasMultipleSelection.value ? combinedBounds.value : selectedRectangle.value
   if (!rectangle) return undefined
   return selectionOutline(rectangle)
@@ -439,7 +447,7 @@ const visibleCurveHandles = computed((): Record<string, Point> | undefined => {
       }
 })
 const showCurveControls = computed(() =>
-  Boolean(!hasMultipleSelection.value && selectedRectangle.value && !isEllipse(selectedRectangle.value) && !isDiamond(selectedRectangle.value) && !isText(selectedRectangle.value) && isHoveringSelectedShape.value),
+  Boolean(!selectedLabel.value && !hasMultipleSelection.value && selectedRectangle.value && !isEllipse(selectedRectangle.value) && !isDiamond(selectedRectangle.value) && !isText(selectedRectangle.value) && isHoveringSelectedShape.value),
 )
 const rotationHandles = computed<Record<Corner, Point> | undefined>(() => {
   const corners = selectionCorners.value
@@ -453,7 +461,7 @@ const rotationHandles = computed<Record<Corner, Point> | undefined>(() => {
     southwest: rotationHandlePoint(worldToScreen(corners.southwest, viewport), center),
   }
 })
-const isTextSelected = computed(() => Boolean(!hasMultipleSelection.value && selectedRectangle.value && isText(selectedRectangle.value)))
+const isTextSelected = computed(() => Boolean(!hasMultipleSelection.value && (selectedLabel.value || (selectedRectangle.value && isText(selectedRectangle.value)))))
 const textLayouts = computed(() => new Map(rectangles.value.filter(isText).map((shape) => [
   shape.id, layoutText(shape.text, shape.width, shape.fontSize, shape.wrap, shape),
 ])))
@@ -477,7 +485,7 @@ const textEditorStyle = computed(() => {
     fontWeight: editor.fontWeight ?? 400,
     fontStyle: editor.fontStyle ?? 'normal',
     textDecoration: editor.textDecoration ?? 'none',
-    textAlign: editor.textAlign ?? 'left',
+    textAlign: editor.kind === 'label' ? editor.textAlign ?? 'center' : editor.textAlign ?? 'left',
     transform: `scale(${viewport.scale}) rotate(${editor.original?.rotation ?? 0}deg)`,
     transformOrigin: 'top left',
   }
@@ -612,6 +620,10 @@ function redoScene() {
 }
 
 function deleteSelectedShape(): boolean {
+  if (selectedLabel.value) {
+    updateLabel(selectedLabel.value.id, undefined)
+    return true
+  }
   return deleteShapes([...selectedShapeIds.value])
 }
 
@@ -640,6 +652,12 @@ function selectShape(shape: RectangleShape | LineShape, append = false): boolean
   return !(append && wasSelected)
 }
 
+function selectLabel(shape: RectangleShape) {
+  setSelection([shape.id])
+  selectedLabelId.value = shape.id
+  liveMessage.value = 'Text selected'
+}
+
 function groupSelectedShapes(): boolean {
   if (selectedShapeIds.value.length < 2) return false
   const groupId = nextGroupId()
@@ -656,6 +674,7 @@ function groupSelectedShapes(): boolean {
 function setSelection(ids: string[]) {
   const available = new Set(allShapes.value.map(shape => shape.id))
   const selected = [...new Set(ids)].filter(id => available.has(id))
+  selectedLabelId.value = undefined
   selectedShapeIds.value = selected
   multiSelectionFrame.value = selected.length > 1 ? selectionOutline(bounds(allShapes.value.filter(shape => selected.includes(shape.id)))!) : undefined
   selectedRectangleId.value = rectangles.value.find(s => s.id === selected.at(-1))?.id
@@ -956,7 +975,8 @@ function startTextEditor(editor: TextEditor) {
   nextTick(() => {
     textArea.value?.focus({ preventScroll: true })
     if (editor.shapeId && textArea.value) {
-      textArea.value.select()
+      if (editor.kind === 'text') textArea.value.select()
+      else textArea.value.setSelectionRange(editor.text.length, editor.text.length)
       textArea.value.scrollLeft = 0
       textArea.value.scrollTop = 0
     }
@@ -1054,6 +1074,10 @@ function editLabel(shape: RectangleShape) {
     fill: shape.labelFill ?? '#171717',
     fontSize: shape.labelFontSize ?? 16,
     fontFamily: shape.labelFontFamily ?? 'shantell',
+    fontWeight: shape.labelFontWeight,
+    fontStyle: shape.labelFontStyle,
+    textDecoration: shape.labelTextDecoration,
+    textAlign: shape.labelTextAlign ?? 'center',
     wrap: true,
     original: { ...shape },
   })
@@ -1067,8 +1091,8 @@ function updateTextEditor(event: Event) {
   if (editor.kind === 'label' && editor.shapeId) {
     const shape = rectangles.value.find((candidate) => candidate.id === editor.shapeId)
     if (!shape || isText(shape)) return
-    const fitted = fitLabel(shape, editor.text, editor.fontSize, editor.fontFamily)
-    replaceRectangle({ ...fitted.shape, label: editor.text || undefined, labelFontSize: editor.fontSize, labelFontFamily: editor.fontFamily, labelFill: editor.fill })
+    const fitted = fitLabel(shape, editor.text, editor.fontSize, editor.fontFamily, editor)
+    replaceRectangle({ ...fitted.shape, label: editor.text || undefined, labelFontSize: editor.fontSize, labelFontFamily: editor.fontFamily, labelFill: editor.fill, labelFontWeight: editor.fontWeight, labelFontStyle: editor.fontStyle, labelTextDecoration: editor.textDecoration, labelTextAlign: editor.textAlign })
     editor.x = labelTextX(fitted.shape)
     editor.y = fitted.shape.y + (fitted.shape.height - fitted.layout.height) / 2
     editor.width = labelTextWidth(fitted.shape)
@@ -1088,6 +1112,25 @@ function updatePropertyTextStyle(patch: TextStylePatch) {
       updateSelectedTextStyle(patch)
       return
     }
+    if (selectedLabel.value) {
+      const shape = selectedLabel.value
+      rectangles.value = rectangles.value.map(candidate => {
+        if (candidate.id !== shape.id) return candidate
+        const styled = {
+          ...candidate,
+          ...('fill' in patch ? { labelFill: patch.fill } : {}),
+          ...(patch.fontFamily !== undefined ? { labelFontFamily: patch.fontFamily } : {}),
+          ...(patch.fontSize !== undefined ? { labelFontSize: patch.fontSize } : {}),
+          ...(patch.fontWeight !== undefined ? { labelFontWeight: patch.fontWeight } : {}),
+          ...(patch.fontStyle !== undefined ? { labelFontStyle: patch.fontStyle } : {}),
+          ...(patch.textDecoration !== undefined ? { labelTextDecoration: patch.textDecoration } : {}),
+          ...(patch.textAlign !== undefined ? { labelTextAlign: patch.textAlign } : {}),
+        }
+        return fitLabel(styled, styled.label ?? '', styled.labelFontSize, styled.labelFontFamily, styled).shape
+      })
+      commitScene()
+      return
+    }
     Object.assign(armedTextStyle, patch)
     return
   }
@@ -1095,8 +1138,8 @@ function updatePropertyTextStyle(patch: TextStylePatch) {
   if (editor.kind === 'label' && editor.shapeId) {
     const shape = rectangles.value.find((candidate) => candidate.id === editor.shapeId)
     if (!shape || isText(shape)) return
-    const fitted = fitLabel(shape, editor.text, editor.fontSize, editor.fontFamily)
-    replaceRectangle({ ...fitted.shape, label: editor.text || undefined, labelFontSize: editor.fontSize, labelFontFamily: editor.fontFamily, labelFill: editor.fill })
+    const fitted = fitLabel(shape, editor.text, editor.fontSize, editor.fontFamily, editor)
+    replaceRectangle({ ...fitted.shape, label: editor.text || undefined, labelFontSize: editor.fontSize, labelFontFamily: editor.fontFamily, labelFill: editor.fill, labelFontWeight: editor.fontWeight, labelFontStyle: editor.fontStyle, labelTextDecoration: editor.textDecoration, labelTextAlign: editor.textAlign })
     editor.x = labelTextX(fitted.shape)
     editor.y = fitted.shape.y + (fitted.shape.height - fitted.layout.height) / 2
     editor.width = labelTextWidth(fitted.shape)
@@ -1288,7 +1331,7 @@ function startSelection(event: PointerEvent, point: Point) {
   const worldPoint = screenToWorld(point, latestViewport())
   const handle = selectionHandleAt(point)
   const rectangleHandle = handle === 'line-curve' ? undefined : handle
-  const rectangle = hasMultipleSelection.value ? selectionFrame.value : selectedRectangle.value
+  const rectangle = hasMultipleSelection.value || selectedLabel.value ? selectionFrame.value : selectedRectangle.value
   const line = selectedLine.value
   const lineHandle = hasMultipleSelection.value ? undefined : lineSelectionHandleAt(point)
   cycleClickPoint = (event.metaKey || event.ctrlKey) && !handle ? point : undefined
@@ -1322,6 +1365,7 @@ function startSelection(event: PointerEvent, point: Point) {
       original: { ...rectangle },
       initial: { ...rectangle },
       originalScene: copyScene(),
+      labelOriginal: selectedLabel.value ? { ...selectedLabel.value } : undefined,
       handleStart: isRotateHandle(rectangleHandle) || isCurveHandle(rectangleHandle) ? undefined : resizeHandlePoint(rectangle, rectangleHandle),
     }
     isRotating.value = isRotateHandle(rectangleHandle)
@@ -1330,6 +1374,9 @@ function startSelection(event: PointerEvent, point: Point) {
     const hit = topHit && !isLine(topHit) ? topHit : undefined
     isHoveringSelectedShape.value = Boolean(hit)
     if (hit) {
+      const labelHit = !event.shiftKey && !event.metaKey && !event.ctrlKey && !isText(hit) && !isImage(hit) && !isFreeDraw(hit) && Boolean(hit.label) && (!hit.groupId || hit.groupId === enteredGroup.value) && containsLabelPoint(hit, worldPoint)
+      if (labelHit) selectLabel(hit)
+      else selectedLabelId.value = undefined
       if (!selectedShapeIds.value.includes(hit.id) && !selectShape(hit, event.shiftKey)) return
       selectionGesture = {
         pointerId: event.pointerId,
@@ -1410,7 +1457,7 @@ function updateSelection(point: Point, constrainProportions = isShiftPressed.val
   // ponytail: rotated/text groups keep proportions; affine geometry is needed for skew.
   constrainProportions ||= selectionGesture.kind === 'resize' && hasMultipleSelection.value && selectedShapes.value.some(s => !isLine(s) && (s.rotation % 90 !== 0 || isText(s)))
   const textCornerResize = Boolean(
-    isText(original) && selectionGesture.kind === 'resize' && selectionGesture.handle && isCorner(selectionGesture.handle),
+    (isText(original) || selectionGesture.labelOriginal) && selectionGesture.kind === 'resize' && selectionGesture.handle && isCorner(selectionGesture.handle),
   )
   const moved = moveRectangle(original, constrainDelta({
     x: pointer.x - selectionGesture.start.x,
@@ -1481,6 +1528,11 @@ function updateSelection(point: Point, constrainProportions = isShiftPressed.val
       const transformed = transformShape(shape, original, next)
       if (isLine(transformed)) replaceLine(transformed); else replaceRectangle(transformed)
     }
+    return
+  }
+  if (selectionGesture.labelOriginal) {
+    const transformed = transformShape(selectionGesture.labelOriginal, original, next)
+    if (!isLine(transformed)) replaceRectangle(transformed)
     return
   }
   if (isText(original)) {
@@ -1637,6 +1689,11 @@ function applySolidColor(color: string) {
       const shape = rectangles.value.find((candidate) => candidate.id === textEditor.value?.shapeId)
       if (shape && !isText(shape)) replaceRectangle({ ...shape, labelFill: color })
     }
+    return
+  }
+  if (selectedLabel.value?.label) {
+    rectangles.value = rectangles.value.map(shape => shape.id === selectedLabel.value?.id ? { ...shape, labelFill: color } : shape)
+    commitScene()
     return
   }
   if (!selectedShapes.value.length && props.activeTool === 'text') {
@@ -1964,12 +2021,52 @@ function labelTextX(shape: RectangleShape): number {
   return shape.x + (shape.width - labelTextWidth(shape)) / 2
 }
 
-function labelLayout(shape: RectangleShape, text: string, fontSize = shape.labelFontSize ?? 16, fontFamily: TextFontFamily = shape.labelFontFamily ?? 'shantell') {
-  return layoutText(text, labelTextWidth(shape), fontSize, true, { fontFamily })
+function labelSelectionBounds(shape: RectangleShape): RectangleShape {
+  const layout = labelLayout(shape, shape.label ?? '')
+  const innerWidth = labelTextWidth(shape)
+  const width = labelTextAlign(shape) === 'justify' && layout.lines.length > 1
+    ? innerWidth
+    : Math.min(innerWidth, Math.max(shape.labelFontSize ?? 16, layout.contentWidth))
+  const x = labelTextAlign(shape) === 'left' || labelTextAlign(shape) === 'justify'
+    ? labelTextX(shape)
+    : labelTextAlign(shape) === 'right' ? labelTextX(shape) + innerWidth - width : shape.x + (shape.width - width) / 2
+  return { ...shape, x, y: shape.y + (shape.height - layout.height) / 2, width, height: layout.height, cornerRadius: 0 }
 }
 
-function fitLabel(shape: RectangleShape, text: string, fontSize = shape.labelFontSize ?? 16, fontFamily: TextFontFamily = shape.labelFontFamily ?? 'shantell') {
-  const layout = labelLayout(shape, text, fontSize, fontFamily)
+function containsLabelPoint(shape: RectangleShape, point: Point): boolean {
+  const local = rotatePoint(point, rectangleCenter(shape), -shape.rotation)
+  const box = labelSelectionBounds(shape)
+  return local.x >= box.x && local.x <= box.x + box.width && local.y >= box.y && local.y <= box.y + box.height
+}
+
+function labelTextAlign(shape: RectangleShape): NonNullable<TextShape['textAlign']> {
+  return shape.labelTextAlign ?? 'center'
+}
+
+function labelLines(shape: RectangleShape): string[] {
+  return layoutText(shape.label ?? '', labelTextWidth(shape), shape.labelFontSize ?? 16, true, {
+    fontFamily: shape.labelFontFamily ?? 'shantell',
+    fontWeight: shape.labelFontWeight ?? 400,
+    fontStyle: shape.labelFontStyle ?? 'normal',
+  }).lines
+}
+
+function labelLineX(shape: RectangleShape): number {
+  return labelTextAlign(shape) === 'left' || labelTextAlign(shape) === 'justify'
+    ? labelTextX(shape)
+    : labelTextAlign(shape) === 'right' ? labelTextX(shape) + labelTextWidth(shape) : shape.x + shape.width / 2
+}
+
+function labelLayout(shape: RectangleShape, text: string, fontSize = shape.labelFontSize ?? 16, fontFamily: TextFontFamily = shape.labelFontFamily ?? 'shantell', style: Pick<TextShape, 'fontWeight' | 'fontStyle'> = {}) {
+  return layoutText(text, labelTextWidth(shape), fontSize, true, {
+    fontFamily,
+    fontWeight: style.fontWeight ?? shape.labelFontWeight ?? 400,
+    fontStyle: style.fontStyle ?? shape.labelFontStyle ?? 'normal',
+  })
+}
+
+function fitLabel(shape: RectangleShape, text: string, fontSize = shape.labelFontSize ?? 16, fontFamily: TextFontFamily = shape.labelFontFamily ?? 'shantell', style: Pick<TextShape, 'fontWeight' | 'fontStyle'> = {}) {
+  const layout = labelLayout(shape, text, fontSize, fontFamily, style)
   const scale = isEllipse(shape) || isDiamond(shape) ? Math.max(1, (layout.height + LABEL_PADDING * 2) * Math.SQRT2 / shape.height) : 1
   const width = shape.width * scale
   const height = isEllipse(shape) || isDiamond(shape) ? shape.height * scale : Math.max(shape.height, layout.height + LABEL_PADDING * 2)
@@ -2607,7 +2704,7 @@ function onDoubleClick(event: MouseEvent) {
 function onTextEditorKeyDown(event: KeyboardEvent) {
   event.stopPropagation()
   if (event.isComposing) return
-  if (event.key === 'Escape' || (event.key === 'Enter' && (event.ctrlKey || event.metaKey))) {
+  if (event.key === 'Escape' || (event.key === 'Enter' && !event.shiftKey)) {
     event.preventDefault()
     finishTextEditor()
     root.value?.focus({ preventScroll: true })
@@ -2824,13 +2921,15 @@ onBeforeUnmount(() => {
             :y="diamond.y + diamond.height / 2"
             :font-size="diamond.labelFontSize ?? 16"
             class="shape-label"
-            :style="{ fill: diamond.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[diamond.labelFontFamily ?? 'shantell'] }"
+            :style="{ fill: diamond.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[diamond.labelFontFamily ?? 'shantell'], fontWeight: diamond.labelFontWeight ?? 400, fontStyle: diamond.labelFontStyle ?? 'normal', textDecoration: diamond.labelTextDecoration ?? 'none', textAnchor: labelTextAlign(diamond) === 'center' ? 'middle' : labelTextAlign(diamond) === 'right' ? 'end' : 'start' }"
           >
             <tspan
-              v-for="(line, index) in wrapText(diamond.label, labelTextWidth(diamond), diamond.labelFontSize ?? 16, true, diamond.labelFontFamily ?? 'shantell')"
+              v-for="(line, index) in labelLines(diamond)"
               :key="index"
-              :x="diamond.x + diamond.width / 2"
-              :dy="index === 0 ? -(wrapText(diamond.label, labelTextWidth(diamond), diamond.labelFontSize ?? 16, true, diamond.labelFontFamily ?? 'shantell').length - 1) * (diamond.labelFontSize ?? 16) * 0.625 : (diamond.labelFontSize ?? 16) * 1.25"
+              :x="labelLineX(diamond)"
+              :dy="index === 0 ? -(labelLines(diamond).length - 1) * (diamond.labelFontSize ?? 16) * 0.625 : (diamond.labelFontSize ?? 16) * 1.25"
+              :textLength="labelTextAlign(diamond) === 'justify' && index < labelLines(diamond).length - 1 ? labelTextWidth(diamond) : undefined"
+              lengthAdjust="spacing"
             >{{ line }}</tspan>
           </text>
         </g>
@@ -2855,13 +2954,15 @@ onBeforeUnmount(() => {
             :y="rectangle.y + rectangle.height / 2"
             :font-size="rectangle.labelFontSize ?? 16"
             class="shape-label"
-            :style="{ fill: rectangle.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[rectangle.labelFontFamily ?? 'shantell'] }"
+            :style="{ fill: rectangle.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[rectangle.labelFontFamily ?? 'shantell'], fontWeight: rectangle.labelFontWeight ?? 400, fontStyle: rectangle.labelFontStyle ?? 'normal', textDecoration: rectangle.labelTextDecoration ?? 'none', textAnchor: labelTextAlign(rectangle) === 'center' ? 'middle' : labelTextAlign(rectangle) === 'right' ? 'end' : 'start' }"
           >
             <tspan
-              v-for="(line, index) in wrapText(rectangle.label, labelTextWidth(rectangle), rectangle.labelFontSize ?? 16, true, rectangle.labelFontFamily ?? 'shantell')"
+              v-for="(line, index) in labelLines(rectangle)"
               :key="index"
-              :x="rectangle.x + rectangle.width / 2"
-              :dy="index === 0 ? -(wrapText(rectangle.label, labelTextWidth(rectangle), rectangle.labelFontSize ?? 16, true, rectangle.labelFontFamily ?? 'shantell').length - 1) * (rectangle.labelFontSize ?? 16) * 0.625 : (rectangle.labelFontSize ?? 16) * 1.25"
+              :x="labelLineX(rectangle)"
+              :dy="index === 0 ? -(labelLines(rectangle).length - 1) * (rectangle.labelFontSize ?? 16) * 0.625 : (rectangle.labelFontSize ?? 16) * 1.25"
+              :textLength="labelTextAlign(rectangle) === 'justify' && index < labelLines(rectangle).length - 1 ? labelTextWidth(rectangle) : undefined"
+              lengthAdjust="spacing"
             >{{ line }}</tspan>
           </text>
         </g>
@@ -2884,13 +2985,15 @@ onBeforeUnmount(() => {
             :y="ellipse.y + ellipse.height / 2"
             :font-size="ellipse.labelFontSize ?? 16"
             class="shape-label"
-            :style="{ fill: ellipse.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[ellipse.labelFontFamily ?? 'shantell'] }"
+            :style="{ fill: ellipse.labelFill ?? 'var(--ink-gray-9, #171717)', fontFamily: TEXT_FONT_FAMILIES[ellipse.labelFontFamily ?? 'shantell'], fontWeight: ellipse.labelFontWeight ?? 400, fontStyle: ellipse.labelFontStyle ?? 'normal', textDecoration: ellipse.labelTextDecoration ?? 'none', textAnchor: labelTextAlign(ellipse) === 'center' ? 'middle' : labelTextAlign(ellipse) === 'right' ? 'end' : 'start' }"
           >
             <tspan
-              v-for="(line, index) in wrapText(ellipse.label, labelTextWidth(ellipse), ellipse.labelFontSize ?? 16, true, ellipse.labelFontFamily ?? 'shantell')"
+              v-for="(line, index) in labelLines(ellipse)"
               :key="index"
-              :x="ellipse.x + ellipse.width / 2"
-              :dy="index === 0 ? -(wrapText(ellipse.label, labelTextWidth(ellipse), ellipse.labelFontSize ?? 16, true, ellipse.labelFontFamily ?? 'shantell').length - 1) * (ellipse.labelFontSize ?? 16) * 0.625 : (ellipse.labelFontSize ?? 16) * 1.25"
+              :x="labelLineX(ellipse)"
+              :dy="index === 0 ? -(labelLines(ellipse).length - 1) * (ellipse.labelFontSize ?? 16) * 0.625 : (ellipse.labelFontSize ?? 16) * 1.25"
+              :textLength="labelTextAlign(ellipse) === 'justify' && index < labelLines(ellipse).length - 1 ? labelTextWidth(ellipse) : undefined"
+              lengthAdjust="spacing"
             >{{ line }}</tspan>
           </text>
         </g>
@@ -3107,9 +3210,9 @@ onBeforeUnmount(() => {
             :secondary-color="activePropertyBorderColor"
             :stroke-width="activePropertyStrokeWidth"
             :stroke-style="activePropertyStrokeStyle"
-            :show-border-options="props.activeTool !== 'draw' && Boolean(selectedShapes.length && !selectedTextShapes.length)"
+            :show-border-options="props.activeTool !== 'draw' && !selectedLabel && Boolean(selectedShapes.length && !selectedTextShapes.length)"
             :target="propertyColorTarget"
-            mode="property-object"
+            :mode="selectedLabel ? 'property-solid' : 'property-object'"
             :property-kind="propertyColorKind"
             label="Custom color"
             @select="applyCustomPropertyColor"
@@ -3148,30 +3251,30 @@ onBeforeUnmount(() => {
           />
         </template>
       </div>
-      <Select
-        :model-value="propertyTextStyle.fontFamily"
-        :options="fontOptions"
-        variant="outline"
-        size="sm"
-        class="property-text-control property-text-control--font"
-        aria-label="Font family"
-        :disabled="!textPropertyControlsEnabled"
-        @update:model-value="updatePropertyTextStyle({ fontFamily: $event as TextFontFamily })"
-      />
-      <Select
-        :model-value="propertyTextStyle.fontSize"
-        :options="fontSizeOptions"
-        variant="outline"
-        size="sm"
-        class="property-text-control property-text-control--size"
-        aria-label="Font size"
-        :disabled="!textPropertyControlsEnabled"
-        @update:model-value="updatePropertyTextStyle({ fontSize: $event as number })"
-      />
-      <Tooltip text="Bold" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': textPropertyControlsEnabled && propertyTextStyle.fontWeight >= 600 }" label="Bold" :aria-pressed="propertyTextStyle.fontWeight >= 600" :disabled="!textPropertyControlsEnabled" @click="updatePropertyTextStyle({ fontWeight: propertyTextStyle.fontWeight >= 600 ? 400 : 600 })"><Icon :name="Bold" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
-      <Tooltip text="Italic" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': textPropertyControlsEnabled && propertyTextStyle.fontStyle === 'italic' }" label="Italic" :aria-pressed="propertyTextStyle.fontStyle === 'italic'" :disabled="!textPropertyControlsEnabled" @click="updatePropertyTextStyle({ fontStyle: propertyTextStyle.fontStyle === 'italic' ? 'normal' : 'italic' })"><Icon :name="Italic" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
-      <Tooltip text="Underline" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': textPropertyControlsEnabled && propertyTextStyle.textDecoration === 'underline' }" label="Underline" :aria-pressed="propertyTextStyle.textDecoration === 'underline'" :disabled="!textPropertyControlsEnabled" @click="updatePropertyTextStyle({ textDecoration: propertyTextStyle.textDecoration === 'underline' ? 'none' : 'underline' })"><Icon :name="Underline" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
-      <Tooltip :text="propertyTextAlignOption.label" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" label="Text alignment" :aria-label="propertyTextAlignOption.label" :disabled="!textPropertyControlsEnabled" @click="cyclePropertyTextAlign"><Icon :name="propertyTextAlignOption.icon" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
+      <template v-if="textPropertyControlsEnabled">
+        <Select
+          :model-value="propertyTextStyle.fontFamily"
+          :options="fontOptions"
+          variant="outline"
+          size="sm"
+          class="property-text-control property-text-control--font"
+          aria-label="Font family"
+          @update:model-value="updatePropertyTextStyle({ fontFamily: $event as TextFontFamily })"
+        />
+        <Select
+          :model-value="propertyTextStyle.fontSize"
+          :options="fontSizeOptions"
+          variant="outline"
+          size="sm"
+          class="property-text-control property-text-control--size"
+          aria-label="Font size"
+          @update:model-value="updatePropertyTextStyle({ fontSize: $event as number })"
+        />
+        <Tooltip text="Bold" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': propertyTextStyle.fontWeight >= 600 }" label="Bold" :aria-pressed="propertyTextStyle.fontWeight >= 600" @click="updatePropertyTextStyle({ fontWeight: propertyTextStyle.fontWeight >= 600 ? 400 : 600 })"><Icon :name="Bold" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
+        <Tooltip text="Italic" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': propertyTextStyle.fontStyle === 'italic' }" label="Italic" :aria-pressed="propertyTextStyle.fontStyle === 'italic'" @click="updatePropertyTextStyle({ fontStyle: propertyTextStyle.fontStyle === 'italic' ? 'normal' : 'italic' })"><Icon :name="Italic" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
+        <Tooltip text="Underline" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" :class="{ 'is-active': propertyTextStyle.textDecoration === 'underline' }" label="Underline" :aria-pressed="propertyTextStyle.textDecoration === 'underline'" @click="updatePropertyTextStyle({ textDecoration: propertyTextStyle.textDecoration === 'underline' ? 'none' : 'underline' })"><Icon :name="Underline" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
+        <Tooltip :text="propertyTextAlignOption.label" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" label="Text alignment" :aria-label="propertyTextAlignOption.label" @click="cyclePropertyTextAlign"><Icon :name="propertyTextAlignOption.icon" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
+      </template>
       <Tooltip text="Bring forward" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" label="Bring forward" :disabled="!selectedShapes.length || !layerActions.forward" @click="reorderSelectedShapes('forward')"><Icon :name="ChevronUp" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
       <Tooltip text="Send backward" placement="top"><Button class="property-tool" size="sm" variant="ghost" theme="gray" label="Send backward" :disabled="!selectedShapes.length || !layerActions.backward" @click="reorderSelectedShapes('backward')"><Icon :name="ChevronDown" class="property-tool-icon" :stroke-width="1.5" /></Button></Tooltip>
     </div>

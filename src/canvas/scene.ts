@@ -14,6 +14,10 @@ export type RectangleShape = {
   labelFontSize?: number
   labelFontFamily?: TextFontFamily
   labelFill?: string
+  labelFontWeight?: TextFontWeight
+  labelFontStyle?: 'normal' | 'italic'
+  labelTextDecoration?: 'none' | 'underline' | 'line-through'
+  labelTextAlign?: TextAlign
   stroke?: string | null
   fill?: string
   strokeWidth?: number
